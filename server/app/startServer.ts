@@ -12,6 +12,7 @@ import { registerRecordingWsHandlers } from '../modules/recording/ws-handlers.ts
 
 import { getInternalIp } from '../modules/agent/index.ts';
 import { recoverInterruptedTestGenRuns } from '../modules/ai-test-gen/index.ts';
+import { recoverInterruptedAiRecorderRuns } from '../modules/ai-driven-recorder/index.ts';
 import { startHtmlKnowledgeCleanup } from '../modules/ai-test-gen/html-knowledge/cleanup.ts';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -114,10 +115,20 @@ export async function startServer(): Promise<Server> {
     registerExecutionWsHandlers();
     registerRecordingWsHandlers();
 
-    // Recover any HITL runs that were waiting before restart
+// Recover any HITL runs that were waiting before restart
     recoverInterruptedTestGenRuns().catch(err => {
       Log.for('server').error(`Failed to recover interrupted test gen runs: ${err}`);
     });
+
+    // Recover AI recorder runs interrupted by WS disconnect (COMPLETE lost before finalize)
+    try {
+      const recovered = recoverInterruptedAiRecorderRuns();
+      if (recovered > 0) {
+        Log.for('server').info(`Recovered ${recovered} interrupted AI recorder run(s)`);
+      }
+    } catch (err) {
+      Log.for('server').error(`Failed to recover interrupted AI recorder runs: ${err}`);
+    }
     return server;
   } catch (error) {
     htmlKnowledgeCleanup?.stop();

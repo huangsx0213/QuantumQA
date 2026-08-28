@@ -141,7 +141,7 @@ async function replayOnce(
 }
 
 /**
- * 在 Playwright Page 上执行单个 TestStep。
+ * 在 Playwright Page 上执行单个 TestStep（confirm/run.ts 复用）。
  *
  * 支持 AI 录制产出的常见 action：click, fill, goto/navigate, selectOption,
  * press, check, uncheck, hover, waitForTimeout, waitForVisible, evaluate。
@@ -151,7 +151,7 @@ async function replayOnce(
  *   2. metadata.recorder.locator（主选择器）
  *   3. step.target（原始选择器或 URL）
  */
-async function executeStepOnPage(step: TestStep, page: Page): Promise<void> {
+export async function executeStepOnPage(step: TestStep, page: Page): Promise<void> {
   const recorder = (step.metadata as any)?.recorder;
   const allLocators: LocatorRef[] | undefined = recorder?.allLocators;
   const primaryLocator: LocatorRef | undefined = recorder?.locator;

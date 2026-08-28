@@ -536,7 +536,7 @@ Apply the rules below. Decide \`testLevel\` per case using the Test Level Decisi
 Call **designer_rules** to load the complete design rules (step atomicity, technique fidelity, test level decision, F12 anti-redundancy, F18 self-check, F31 budget, F32 test data format, self-review scoring). You MUST call this before designing any test cases.
 
 ## Required Fields
-For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`title\`, \`conditionId\`, \`requirementId\`, \`coveredConditions\`, \`referencedComponentConditions\` (for integration cases), \`priority\`, \`category\`, \`testLevel\`, \`techniqueApplied\`, \`preconditions\`, \`testData\`, \`steps\`, \`postconditions\`, \`tags\`, \`selfReview\`. \`testLevel\` must be exactly one of \`"component"\` or \`"integration"\`. \`coveredConditions\` must include the primary \`conditionId\` and may include additional flow conditions. \`referencedComponentConditions\` must be non-empty for any \`testLevel: "integration"\` case. When the user input contains \`availableComponentConditions\`, use one or more of their exact \`referenceId\` values for \`referencedComponentConditions\`; never use an AC ID, a requirement ID, or a bare \`C-*\` ID from another batch. An empty object \`{}\` is always invalid. Do not end your analysis until you have described at least one complete test case for extraction.
+For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`title\`, \`conditionId\`, \`requirementId\`, \`coveredConditions\`, \`referencedComponentConditions\` (for integration cases), \`priority\`, \`category\`, \`testLevel\`, \`techniqueApplied\`, \`preconditions\`, \`testData\`, \`steps\` (each step carrying a mandatory \`intent\` object — see the "step intent" section), \`postconditions\`, \`tags\`, \`selfReview\`. \`testLevel\` must be exactly one of \`"component"\` or \`"integration"\`. \`coveredConditions\` must include the primary \`conditionId\` and may include additional flow conditions. \`referencedComponentConditions\` must be non-empty for any \`testLevel: "integration"\` case. When the user input contains \`availableComponentConditions\`, use one or more of their exact \`referenceId\` values for \`referencedComponentConditions\`; never use an AC ID, a requirement ID, or a bare \`C-*\` ID from another batch. An empty object \`{}\` is always invalid. Do not end your analysis until you have described at least one complete test case for extraction.
 
 ## Strict Schema Constraints (HARD — schema will REJECT violations)
 These constraints are enforced by the Zod schema at parse time. Violations cause Phase 2 retries and may fail the entire pipeline after 3 attempts.
@@ -593,13 +593,65 @@ Other common WRONG patterns (all will be REJECTED):
 
 **Rule: if your \`expected\` value contains a semicolon (\`;\` or \`；\`), it is WRONG. Split the step into multiple steps.**
 
-### action field (step atomicity)
-Each step's \`action\` field must contain a **single operation**. Forbidden compound patterns:
+### action field (step atomicity + verb-first)
+Each step's \`action\` is a **single operation** that **starts with a vocabulary verb** (the closed list below). The machine parses the action's verb directly — no separate actionType field. CamelCase verbs may be written space-separated: \`waitFor\` → "wait for the network response"; \`switchTo\` → "switch to frame ...".
+
+Forbidden compound patterns:
 - \`"while <gerund>"\` (e.g. "Enter password while leaving username empty")
 - \`", then"\` (e.g. "Enter username, then click submit")
 - \`"but leave/without"\` (e.g. "Enter username but leave password empty")
 - \`"both"\` (e.g. "Ensure both username and password are empty")
 Split these into separate steps — one action per step.
+
+### step intent (structured vocabulary — data & expectation only)
+Every step carries an \`intent\` object with the machine-readable data and expected outcome. The **action verb lives in the \`action\` text itself, NOT in intent**. CamelCase verbs may be written space-separated: \`waitFor\` → "wait for the network response"; \`switchTo\` → "switch to frame ...".
+
+\`\`\`json
+{ "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin'.",
+  "intent": { "targetHint": "username input field", "data": "admin",
+              "expectation": { "kind": "value", "value": "admin" } } }
+\`\`\`
+
+**action verb** (closed enum — the FIRST word of \`action\`):
+\`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog, waitFor, verify, extract\`
+Reserved — will be REJECTED: \`api, runModule\`.
+
+### Choosing the action verb — web operation vs verification (NEVER mix)
+Verbs fall into two roles. Pick the role that matches what the step actually does:
+
+- **Web operation** (real DOM interaction — the user acts): \`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog\`
+- **Verification** (pure check, NO DOM operation — asserts a state that already exists): \`verify\`
+- **Wait** (wait for a condition, no DOM operation): \`waitFor\`
+
+**Hard rule:** to reach a state that requires a user action (e.g. navigating to a page by clicking a menu), the ACTION must be its own step with the WEB verb — \`verify\` alone CANNOT perform it. \`verify\` only asserts what a PREVIOUS step produced.
+
+WRONG (verify used to perform navigation — no one clicked the menu):
+- \`action: "verify the page navigates to the Reports page"\`
+RIGHT (click the menu first, then verify the result):
+- \`action: "click the Reports menu item"\` then \`action: "verify the URL contains /reports"\`
+
+Rule of thumb: if the app needs a user action to get there, write that action as a step with the real verb (click/select/navigate…); a verify step can only check what already happened.
+
+**expectation.kind** (closed enum — what is observable after the action):
+\`url, title, text-visible, element-visible, element-hidden, value, element-state, attribute, network, api-body\`
+FORBIDDEN: \`transient\` (loading states, animations, focus — rewrite as an observable end state). \`api-body\` requires \`expression\` (JSONPath, e.g. \`$.token\`).
+
+**Hard rules (schema-rejected):**
+- \`verify\` and \`waitFor\` MUST carry \`expectation\` (no DOM action — without it the step is meaningless).
+- \`fill\`, \`select\`, \`navigate\`, \`upload\`, \`press\` MUST set \`intent.data\`.
+- testData-sourced values: set \`intent.data\` to \`\${key}\` (e.g. \`\${username}\`), resolved at record time.
+- \`element-state\` \`expectation.value\` ∈ \`enabled, disabled, checked, unchecked\`.
+- \`dialog\` \`intent.data\` ∈ \`accept, dismiss\`.
+- \`navigate\` \`intent.data\`: a URL or space-free app path (e.g. \`/login\`), resolved against the app origin.
+
+**Choosing expectation.kind** — match what the \`expected\` sentence observes:
+- "navigates to the dashboard URL" → \`{ "kind": "url", "value": "/dashboard" }\`
+- "displays 'Welcome back'" → \`{ "kind": "text-visible", "value": "Welcome back" }\`
+- "field displays 'admin'" → \`{ "kind": "value", "value": "admin" }\`
+- "login request is sent" → \`{ "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" }\`
+- "response body contains a token" → \`{ "kind": "api-body", "expression": "$.token", "value": "present" }\`
+- "checkbox is checked" → \`{ "kind": "element-state", "value": "checked" }\`
+- "element is gone / not present" → \`{ "kind": "element-hidden" }\`
 
 ## Instructions
 1. Design one or more complete test cases for EACH input condition. Ensure EVERY condition provided in the input is fully covered. If a condition contains multiple explicit data variants, ensure the test data covers them. The \`draftTestCases\` array MUST contain all designed test cases. **One condition MAY be split into multiple test cases** when the data variants or alternate paths warrant it; in that case all derived cases MUST list the original condition in \`coveredConditions\`.
@@ -641,12 +693,18 @@ After your analysis, end with a single JSON code block containing the COMPLETE s
       ],
       "testData": ["username = admin (valid partition)", "password = admin123 (valid partition)"],
       "steps": [
-        { "stepNumber": 1, "action": "Enter username 'admin' into the username field.", "expected": "The username field displays 'admin' with no client-side validation error." },
-        { "stepNumber": 2, "action": "Enter password 'admin123' into the password field.", "expected": "The password field shows masked characters with no client-side validation error." },
-        { "stepNumber": 3, "action": "Click the Sign in / Login button.", "expected": "The submit button enters a disabled loading state and the login request is sent to the auth API." },
-        { "stepNumber": 4, "action": "Wait for the authentication response.", "expected": "The auth API returns HTTP 200 with a session token in the response body." },
-        { "stepNumber": 5, "action": "Wait for the redirect to settle.", "expected": "The browser navigates to the dashboard URL." },
-        { "stepNumber": 6, "action": "Query the session store for the returned token.", "expected": "The session store contains an entry for the returned token bound to user 'admin'." }
+        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error.",
+          "intent": { "targetHint": "username input field", "data": "admin", "expectation": { "kind": "value", "value": "admin" } } },
+        { "stepNumber": 2, "action": "fill the password field with 'admin123'", "expected": "The password field accepts 'admin123' with no client-side validation error.",
+          "intent": { "targetHint": "password input field", "data": "admin123", "expectation": { "kind": "value", "value": "admin123" } } },
+        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The login request is sent to the auth API.",
+          "intent": { "targetHint": "Sign in button", "expectation": { "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" } } },
+        { "stepNumber": 4, "action": "waitFor the network response from /aut-api/auth/login", "expected": "The auth API returns HTTP 200.",
+          "intent": { "targetHint": "auth API response", "expectation": { "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" } } },
+        { "stepNumber": 5, "action": "verify the URL contains /dashboard", "expected": "The browser URL contains the dashboard path.",
+          "intent": { "targetHint": "browser page", "expectation": { "kind": "url", "value": "/dashboard" } } },
+        { "stepNumber": 6, "action": "verify the dashboard displays 'Welcome back, Admin!'", "expected": "The dashboard displays 'Welcome back, Admin!'.",
+          "intent": { "targetHint": "dashboard greeting", "expectation": { "kind": "text-visible", "value": "Welcome back, Admin!" } } }
       ],
       "postconditions": ["Authenticated session is created in the session store", "Dashboard is accessible for the logged-in user"],
       "tags": ["authentication", "login", "dashboard", "session", "smoke", "happy-path", "integration"],
@@ -654,8 +712,9 @@ After your analysis, end with a single JSON code block containing the COMPLETE s
         "score": 9,
         "strengths": [
           "Each step has exactly one action and one observable expected result",
+          "Every step carries a structured intent — machine-executable without guessing",
           "Test data explicitly labeled with its EP partition for traceability",
-          "Step 6 verifies the downstream session store, not just the API response — true integration coverage",
+          "Steps 5-6 verify the downstream dashboard outcome, not just the API response — true integration coverage",
           "coveredConditions lists C-002 (the flow condition this case covers); referencedComponentConditions lists C-001 and C-003 (the component behaviors assumed as preconditions) — clear traceability"
         ],
         "weaknesses": ["Does not assert specific dashboard widget content, only that the navigation succeeded"],
@@ -679,9 +738,12 @@ After your analysis, end with a single JSON code block containing the COMPLETE s
       ],
       "testData": ["password = weakpass123 (invalid partition: no special character)"],
       "steps": [
-        { "stepNumber": 1, "action": "Enter 'admin' into the username field.", "expected": "The username field displays 'admin' with no client-side validation error." },
-        { "stepNumber": 2, "action": "Enter 'weakpass123' into the password field.", "expected": "The password field shows masked characters; a client-side validation message appears indicating the password format is invalid." },
-        { "stepNumber": 3, "action": "Click the Sign in / Login button.", "expected": "The form is NOT submitted; no request is sent to the auth API; the validation message remains visible." }
+        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error.",
+          "intent": { "targetHint": "username input field", "data": "admin", "expectation": { "kind": "value", "value": "admin" } } },
+        { "stepNumber": 2, "action": "fill the password field with 'weakpass123'", "expected": "A client-side validation message indicates the password format is invalid.",
+          "intent": { "targetHint": "password input field", "data": "weakpass123", "expectation": { "kind": "text-visible", "value": "invalid" } } },
+        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The form is not submitted and the user remains on the login page.",
+          "intent": { "targetHint": "Sign in button", "expectation": { "kind": "url", "value": "/login" } } }
       ],
       "postconditions": ["No session is created", "User remains on the login page"],
       "tags": ["authentication", "login", "validation", "negative", "component"],
@@ -709,10 +771,8 @@ ${buildTechniqueFewShot(state)}
 - **\`testLevel\` must be lowercase** \`"component"\` or \`"integration"\`.
 - **\`coveredConditions\` must be non-empty** — at minimum \`[conditionId]\`.
 - **\`referencedComponentConditions\` (integration only) must use real IDs from the input** — plain condition IDs (e.g. \`C-001\`) or verbatim \`referenceId\` from \`availableComponentConditions\`. Never fabricate IDs.
-- **\`expected\` must not contain semicolons** — one assertion per step.
-- **\`action\` must be a single operation** — no "while <gerund>", ", then", "but leave/without", or "both".
 
-Final check before closing the block — every step has exactly one action and one concrete observable expected result; EP/BVA test data states the partition or boundary position, not a bare value; every case's preconditions are self-contained; every case declares \`testLevel\` as \`"component"\` or \`"integration"\` AND the step design honors that level (integration cases traverse 2+ components, component cases stay within one); **integration cases do NOT re-assert what a sibling component case already covers** (move atomic behavior into preconditions, assert only the cross-component outcome).
+Final check before closing the block: every testData entry states its partition/boundary; every case's preconditions are self-contained; every case declares \`testLevel\` as \`"component"\` or \`"integration"\` AND the step design honors that level (integration cases traverse 2+ components, component cases stay within one); **integration cases do NOT re-assert what a sibling component case already covers** (move atomic behavior into preconditions, assert only the cross-component outcome).
 `;
 }
 
@@ -817,6 +877,9 @@ RIGHT (split into two steps):
 ### coveredConditions and referencedComponentConditions
 Preserve these from the draft cases. Do NOT empty them. If a draft case had \`coveredConditions: ["C-001"]\`, the final case must also have \`coveredConditions: ["C-001"]\` (or a superset).
 
+### step intent — MUST preserve verbatim
+Every draft step carries an \`intent\` object (\`targetHint\`/\`data\`/\`expectation\` — the action verb lives in the \`action\` text first word). Copy the \`intent\` **unchanged** into \`finalTestCases\` — do NOT rewrite, re-enum, or drop it. If missing, leave it missing (the recorder falls back to inference); do NOT invent one.
+
 ${state.humanReviewFeedback ? `## Reviewer Feedback\n${state.humanReviewFeedback}` : ''}
 
 ## Output Format
@@ -846,12 +909,12 @@ End with a single JSON code block containing the COMPLETE output. Nothing after 
       ],
       "testData": ["username = admin (valid partition)", "password = admin123 (valid partition)"],
       "steps": [
-        { "stepNumber": 1, "action": "Enter username 'admin' into the username field.", "expected": "The username field displays 'admin' with no client-side validation error." },
-        { "stepNumber": 2, "action": "Enter password 'admin123' into the password field.", "expected": "The password field shows masked characters with no client-side validation error." },
-        { "stepNumber": 3, "action": "Click the Sign in / Login button.", "expected": "The submit button enters a disabled loading state and the login request is sent." },
-        { "stepNumber": 4, "action": "Wait for the authentication response.", "expected": "The auth API returns HTTP 200 with a session token in the response body." },
-        { "stepNumber": 5, "action": "Wait for the redirect to settle.", "expected": "The browser navigates to the dashboard URL." },
-        { "stepNumber": 6, "action": "Query the session store for the returned token.", "expected": "The session store contains an entry for the returned token bound to user 'admin'." }
+        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error." },
+        { "stepNumber": 2, "action": "fill the password field with 'admin123'", "expected": "The password field accepts 'admin123' with no client-side validation error." },
+        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The login request is sent to the auth API." },
+        { "stepNumber": 4, "action": "waitFor the network response from /aut-api/auth/login", "expected": "The auth API returns HTTP 200." },
+        { "stepNumber": 5, "action": "verify the URL contains /dashboard", "expected": "The browser URL contains the dashboard path." },
+        { "stepNumber": 6, "action": "verify the dashboard displays 'Welcome back, Admin!'", "expected": "The dashboard displays 'Welcome back, Admin!'." }
       ],
       "tags": ["authentication", "login", "dashboard", "session", "smoke", "happy-path", "integration"],
       "status": "approved",

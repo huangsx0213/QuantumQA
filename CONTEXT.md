@@ -32,3 +32,13 @@
 ## 共享执行核心
 
 - **execution-core** — 断言求值纯逻辑（`evaluateAssertions`、上下文构建），位于 shared/；server 运行期与 agent 编译期双端消费同一实现。
+
+## ★ 统一测试标准（2026-08 设计决议，docs/08）
+
+需求 → NL 用例 → AI 录制 → 测试设计落盘，四层共享同一份词表；接棒零猜测，落盘即合法。词表以 Test Design 执行面全量 42 关键字为完备性基准（✅生成可用 35 ｜ 🔶预留 5：api×4+runModule ｜ ⛔排除 2：highlight/evaluate）。
+
+- **动作词表 (ActionVerb)** — 生成端动词封闭枚举（22 个）：`navigate / fill / clear / select / press / click / doubleClick / rightClick / hover / drag / toggle / check / uncheck / upload / scroll / switchTo / dialog / waitFor / verify / extract` + 预留（`api / runModule`）。**动作类型即 `action` 文本首词**（机器 `parseActionVerb` 解析，无需单独字段），每个动词确定性映射到执行关键字（`dblclick / setInputFiles / switchToFrame / acceptDialog / extractVar …`）；`highlight / evaluate / getby*` 明确排除（附理由）。
+- **期望分类 (ExpectationKind)** — 期望的可断言性封闭分类：`url / title / text-visible / element-visible / element-hidden / value / element-state / attribute / network / api-body(预留) / transient(生成期即拒绝)`。每类有到断言 source 与 verify 落盘动作（`assertUrl / assertText / assertInvisible …`）的确定性映射。
+- **步骤意图 (NlStepIntent)** — NL 步骤在自由文本（action/expected）之外携带的结构化字段：`{ targetHint?, data?, expectation? { kind, value, expression?, method?, urlPattern? } }`。动作类型不放这里——由 `action` 首词解析；`data`/`expectation` 是文本表达不了的机器信息。Test Gen 按词表生成，Recorder 优先消费；缺省回退推断链路（存量兼容）。
+- **断言-only 步骤** — `verify` 类步骤在 Draft 中的形态：无 DOM 操作，仅承载断言（解决"等待/查询类步骤落盘即消失"问题）。
+- **三处一致性铁律** — 词表常量、映射表、执行引擎 switch 以单测锁死；新增关键字三处同改，映射完备性以 StepList 动作下拉为基准。

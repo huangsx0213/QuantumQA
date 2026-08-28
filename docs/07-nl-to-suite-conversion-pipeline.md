@@ -1,7 +1,7 @@
 # 07 · NL → 生产级结构化用例转化管线（设计方案）
 
-> 状态：设计定稿，待实施
-> 关联：[05-AIDrivenRecordingEngine.md](05-AIDrivenRecordingEngine.md)、[06-ai-test-generation-strategy.md](06-ai-test-generation-strategy.md)
+> 状态：已实施（M1–M5 完成；编译管线由 `options.enableCompilePipeline` 开关隔离，默认走旧路径）
+> 关联：[05-AIDrivenRecordingEngine.md](05-AIDrivenRecordingEngine.md)、[06-ai-test-generation-strategy.md](06-ai-test-generation-strategy.md)、[08-unified-test-standard.md](08-unified-test-standard.md)（统一词表——Test Gen 生成端按词表出牌后，本方案 C 阶段的推断/裁决链路将简化为查表）
 > 域词汇表：[CONTEXT.md](../CONTEXT.md)
 
 ---
@@ -165,24 +165,31 @@ interface AssertionProposal {
 }
 ```
 
-### D. Confirm —— 确认运行
+### D. Confirm —— 确认运行（Server 端，复用生产执行引擎）
 
-改造 `auto-replay.ts`（解禁）为 `agent/recorder/confirm/run.ts`。
+> 架构修订（2026-08-25）：确认运行从 Agent 会话内迁至 **Server 端**。原实现复用录制浏览器回放，
+> 存在 cookie/登录态跨轮泄漏、双执行引擎漂移、过程不可观测三个缺陷。
 
-- **触发条件**：case 内存在 ≥1 条 `origin='ai'` 提议；**纯规则 case 跳过**（规则来自刚刚观测的事实）。
-- **执行**：复用 ui-executor 引擎无头回放 ≤2 次；断言一律 `failureStrategy:'soft'`（坏断言不拖垮整轮）；每次运行收割**逐条断言结果**（assertionId → passed/actualValue/message）。
-- **判定矩阵**：
+流程：
+1. Agent 录制完成 → 会话关闭（浏览器关闭）→ COMPLETE 事件携带带临时断言 + provenance 的 refined steps 落库
+2. `finalize-run` 检测 run options 的 `enableCompilePipeline` → 触发 `confirmation.ts`（fire-and-forget）
+3. Server 以**生产 case 执行管线**（`startExecutionAndWait`：buildPayload → executeSingleCase → finalizeRun）无头回放 ≤2 次：
+   - 每次全新 UIExecutor = 全新浏览器上下文，零录制残留
+   - 报告照常落库 → Runs/Reports 界面可直接查看确认运行过程与截图
+   - 断言以临时 `soft` 策略执行；逐条结果经 ui-executor 日志的**结构化 metadata** 收割（`harvestAssertionResults`）
+   - 引擎返回非 COMPLETED（动作失败）→ 该轮无效，重试一次
+4. 判定矩阵（`decideConfirmationVerdict`）；完成后 `emitAssertions` 三态写回 suite，SSE 广播 `confirm:start/complete`（前端横幅）
+
+判定矩阵：
 
 | Run1 | Run2 | 判定 |
 |---|---|---|
 | PASS | PASS | `ai-confirmed` |
 | PASS | FAIL | flaky → `needs-review` |
 | FAIL | FAIL | 错误绑定或非幂等副作用 → `needs-review` |
-| 基础设施故障* | — | 该次无效，重试 1 次；仍故障 → 全部保持 `needs-review` |
+| 引擎非 COMPLETED* | — | 该轮无效，重试 1 次；仍故障 → 全部保持 `needs-review` |
 
-\* 浏览器崩溃/导航失败等非断言错误。
-
-- 回放从 startUrl 起全新 context（沿用 auto-replay 现有行为）。
+\* soft 策略下断言失败不会中止用例；非 COMPLETED 即动作/基础设施失败。
 
 ### E. Emit —— 落库三态
 
@@ -219,19 +226,20 @@ interface ReviewAssertion {
 
 ```
 agent/recorder/
-  ai-recording-session.ts      瘦身为管线编排器
+  ai-recording-session.ts      瘦身为管线编排器（录制+取证+编译；Confirm 已迁出）
   ground.ts                    [新] Evidence Pack
   compile/
     rules.ts                   [新] 规则断言（纯函数）
     proposer.ts                [新] AI 裁决/提议（Seam，Stagehand adapter）
     gate.ts                    [新] 编译门（纯函数 + page 探测）
-  confirm/
-    run.ts                     [改] 自 auto-replay，逐条收割断言结果
-  refiner.ts                   emitAssertions 并入管道
+  refiner.ts                   emitAssertions / 判定矩阵 / 日志收割 并入管道
 shared/execution-core/
   assertions.ts                [移] 求值引擎
-server/modules/execution/      re-export 兼容层
-client/ Test Designer          reviewAssertions 审核面板
+server/modules/execution/      re-export 兼容层 + startExecutionAndWait（确认运行入口）
+server/modules/ai-driven-recorder/
+  confirmation.ts              [新] Server 端确认服务（复用生产 case 执行管线）
+  finalize-run.ts              [改] COMPLETE 后按 run options 触发确认
+client/ Test Designer          reviewAssertions 审核面板 + confirm 阶段横幅
 ```
 
 ## 7. 边界情况与降级策略

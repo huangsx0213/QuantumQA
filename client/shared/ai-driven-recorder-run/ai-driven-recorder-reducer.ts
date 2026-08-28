@@ -114,6 +114,24 @@ export function recorderReducer(
         }),
       };
 
+    case 'CONFIRM_START':
+      return {
+        ...state,
+        confirmPhase: { phase: 'running' },
+      };
+
+    case 'CONFIRM_COMPLETE':
+      return {
+        ...state,
+        confirmPhase: {
+          phase: 'done',
+          completedRuns: action.completedRuns,
+          confirmed: action.confirmed,
+          review: action.review,
+          blockedByInfraFailure: action.blockedByInfraFailure,
+        },
+      };
+
     case 'RUN_COMPLETE':
       return {
         ...state,

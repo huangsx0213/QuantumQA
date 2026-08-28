@@ -61,6 +61,18 @@ export function saveDraftSuite(
     description: `AI 驱动录制生成的草稿套件，来源 NlCase: ${nlCaseId}`,
     cases: [testCase],
     position: 0,
+    // 将 NL 用例的 testData 转为套件变量（${key} 模板在运行期由执行引擎解析）。
+    // 按 key 去重（ai-test-gen 跨 condition 合并时可能产生重复 key），后者覆盖前者。
+    // id 必须全局唯一（suite_variables.id 是主键）——用 randomId，不能用 var-${key}。
+    variables: [...new Map(
+      (nlCase?.testData ?? [])
+        .filter((td: any) => td && td.key)
+        .map((td: any) => [td.key, td]),
+    ).values()].map((td: any) => ({
+      id: randomId('var'),
+      key: td.key,
+      value: td.value,
+    })),
   };
 
   saveSuite(suite);

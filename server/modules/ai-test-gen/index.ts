@@ -160,6 +160,28 @@ router.delete('/prompts/:projectId/:agentName', withErrorHandling((req, res) => 
   res.json(controller.deletePromptOverride(p(req.params.projectId), p(req.params.agentName)));
 }));
 
+// ============================================================
+// Default Prompts (read-only reference)
+// ============================================================
+
+// 获取指定 agent 的默认 prompt
+router.get('/prompts/:projectId/default/:agentName', withErrorHandling((req, res) => {
+  const agentName = p(req.params.agentName);
+  const validAgents = ['test_analyst', 'test_designer', 'quality_manager'];
+  if (!validAgents.includes(agentName)) {
+    res.status(400).json({ error: 'Invalid agent name' });
+    return;
+  }
+  const prompt = controller.getDefaultPrompt(agentName);
+  res.json({ agentName, prompt });
+}));
+
+// 获取最近一次成功运行的 agent prompts
+router.get('/prompts/:projectId/latest', withErrorHandling((req, res) => {
+  const logs = controller.getLatestRunLogs(p(req.params.projectId));
+  res.json(logs ?? []);
+}));
+
 export const recoverInterruptedTestGenRuns = () => controller.recoverInterruptedRuns();
 
 export const aiTestGenModule = { basePath: '/api/test-gen', router };

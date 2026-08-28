@@ -427,6 +427,10 @@ export class UIExecutor {
 
     // Execute the action
     let waitPromise: Promise<import('playwright').Response> | undefined;
+    // U5: captured network response for API_BODY_JSON assertions
+    let capturedResponseBody: string | undefined;
+    let capturedResponseStatus: number = 0;
+    let capturedResponseHeaders: Record<string, string> = {};
     if (step.waitForNetwork?.enabled && step.waitForNetwork.urlPattern) {
       const { urlPattern, method, expectedStatus, timeoutMs = 10000 } = step.waitForNetwork;
       const resolvedUrlPattern = executionContext.interpolate(urlPattern);
@@ -774,6 +778,10 @@ break;
 
       let responseText: string | undefined;
       try { responseText = await apiResponse.text(); } catch (e) { /* ignore */ }
+      // U5: stash for assertion context (API_BODY_JSON / API_STATUS / API_HEADER)
+      capturedResponseBody = responseText;
+      capturedResponseStatus = apiResponse.status();
+      try { capturedResponseHeaders = apiResponse.headers(); } catch { /* ignore */ }
 
       // Process API Extractors if any
         if (step.waitForNetwork?.extractors && step.waitForNetwork.extractors.length > 0) {
@@ -918,17 +926,25 @@ break;
 
     // ─── Process Step-Level Assertions ───
     if (step.assertions && step.assertions.length > 0) {
-      const attributeNames = step.assertions
+      // 断言值（expectedValue / expression / UI_ATTRIBUTE 属性名）在运行期插值：
+      // AI 编译器落库的参数化断言（如 {{username}}）必须在此解析为真实值。
+      const resolveAssertion = (a: StepAssertion): StepAssertion => ({
+        ...a,
+        ...(a.expectedValue !== undefined ? { expectedValue: executionContext.interpolate(a.expectedValue) } : {}),
+        ...(a.expression ? { expression: executionContext.interpolate(a.expression) } : {}),
+      });
+      const resolvedAssertions = step.assertions.map(resolveAssertion);
+      const attributeNames = resolvedAssertions
         .filter(a => a.source === 'UI_ATTRIBUTE' && a.expression)
         .map(a => a.expression!);
       const uiCtx = await buildUiAssertionContext(this.page, resolvedSelector ? await getSmartLocator({ skipActionabilityCheck: true }) : null, attributeNames);
       const context: AssertionContext = {
-        body: '',
-        headers: {},
-        status: 0,
+        body: capturedResponseBody ?? '',
+        headers: capturedResponseHeaders,
+        status: capturedResponseStatus,
         ui: uiCtx,
       };
-const results = evaluateAssertions(context, step.assertions, step.failureStrategy || 'fail-fast');
+const results = evaluateAssertions(context, resolvedAssertions, step.failureStrategy || 'fail-fast');
       for (const res of results) {
         const { assertion, actualValue, passed, message } = res;
         const source = assertion.source;
@@ -940,11 +956,22 @@ const results = evaluateAssertions(context, step.assertions, step.failureStrateg
         const logSuffix = detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
 
         if (passed) {
-          logs.push({ status: 'PASS', level: 'success', message: ` ✅ Assertion Passed: [${source}]${expr} ${op}${logSuffix}` });
+          logs.push({
+            status: 'PASS',
+            level: 'success',
+            message: ` ✅ Assertion Passed: [${source}]${expr} ${op}${logSuffix}`,
+            // 结构化断言结果：编译期确认运行（docs/07 阶段 D）据此收割，避免解析日志文本
+            metadata: { assertionId: assertion.id, passed: true, actualValue: actualStr },
+          } as any);
         } else {
           const isMismatch = message.includes('Expected') && message.includes('but got');
           const errorDetail = isMismatch ? '' : ` — ${message}`;
-          logs.push({ status: 'FAIL', level: 'error', message: ` ❌ Assertion Failed: [${source}]${expr} ${op}${logSuffix}${errorDetail}` });
+          logs.push({
+            status: 'FAIL',
+            level: 'error',
+            message: ` ❌ Assertion Failed: [${source}]${expr} ${op}${logSuffix}${errorDetail}`,
+            metadata: { assertionId: assertion.id, passed: false, actualValue: actualStr },
+          } as any);
         }
       }
 

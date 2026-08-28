@@ -18,7 +18,18 @@ const { mockStagehand, mockPage, mockCdpBrowser, mockCdpContext, mockBrowser } =
     goto: vi.fn().mockResolvedValue(undefined),
     waitForLoadState: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockResolvedValue('https://app.com/home'),
-    evaluate: vi.fn().mockResolvedValue({ inputs: 'username: admin', bodyText: '' }),
+    title: vi.fn().mockResolvedValue('App'),
+    // Ground 契约：inputs 为 {name,value} 数组（见 ground.ts collectEvidencePack）
+    evaluate: vi.fn().mockResolvedValue({ inputs: [{ name: 'username', value: 'admin' }], bodyText: '' }),
+    locator: vi.fn(() => ({
+      ariaSnapshot: vi.fn().mockResolvedValue('- textbox "username"'),
+      first: () => ({
+        evaluate: vi.fn().mockRejectedValue(new Error('probe unsupported')),
+        inputValue: vi.fn().mockRejectedValue(new Error('probe unsupported')),
+        textContent: vi.fn().mockRejectedValue(new Error('probe unsupported')),
+        isVisible: vi.fn().mockResolvedValue(true),
+      }),
+    })),
     on: vi.fn(),
     setViewportSize: vi.fn().mockResolvedValue(undefined),
   };
@@ -440,9 +451,9 @@ describe('AIRecordingSession', () => {
       const aiSteps = result.steps.filter(s => (s.assertions ?? []).some(a => a.message.startsWith('AI generated')));
       expect(aiSteps.length).toBeGreaterThanOrEqual(1);
       const assertion = aiSteps[0].assertions!.find(a => a.message.startsWith('AI generated'))!;
-      // 强制纠正为 UI_VALUE；expectedValue 同步参数化（admin → ${username}，与 data 一致）
+      // 强制纠正为 UI_VALUE；expectedValue 同步参数化（admin → {{username}}，与 data 一致）
       expect(assertion.source).toBe('UI_VALUE');
-      expect(assertion.expectedValue).toBe('${username}');
+      expect(assertion.expectedValue).toBe('{{username}}');
     });
 
     it('button 步骤：AI 误提 UI_VALUE 被丢弃（按钮没有 value）', async () => {

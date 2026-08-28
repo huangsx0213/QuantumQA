@@ -105,14 +105,25 @@ export interface AiAssertionProposal {
   source: string;
   operator: string;
   expectedValue?: string;
+  /** JSONPath / header name / attribute name（API_BODY_JSON / API_HEADER / UI_ATTRIBUTE 用） */
+  expression?: string;
   /** 生成来源的 expected 原文，用于 message 溯源 */
   expectedText?: string;
+  /** 元素依托：边界内原始 payload 序号（编译管线产出） */
+  targetPayloadIndex?: number;
+  /** 提议来源：rule=录制事实推导 / ai=LLM 裁决 */
+  origin?: 'rule' | 'ai';
+  confidence?: number;
+  rationale?: string;
 }
 
 /**
  * 把录制元数据中的 AI 断言建议（metadata.aiAssertion）转为 StepAssertion。
  * 校验 source/operator 枚举与 expectedValue 必填性，非法建议静默丢弃。
  * message 带 "AI:" 前缀溯源，用户可在 Test Designer 中编辑或删除。
+ * 同时写入 metadata.assertionProvenance[assertionId] = origin
+ * （缺省 'ai'——旧路径建议保守视为 AI 提议，走确认运行），
+ * 供 emitAssertions 做来源三态判定（docs/07 §4-E）。
  */
 export function applyAiAssertions(steps: TestStep[]): TestStep[] {
   return steps.map(step => {
@@ -128,15 +139,149 @@ export function applyAiAssertions(steps: TestStep[]): TestStep[] {
       source: meta.source as AssertionSource,
       operator: meta.operator as AssertionOperator,
       ...(meta.expectedValue ? { expectedValue: meta.expectedValue } : {}),
+      ...(meta.expression ? { expression: meta.expression } : {}),
       message: `AI generated from expected: "${(meta.expectedText ?? '').slice(0, 150)}"`,
     };
-    return { ...step, assertions: [...(step.assertions ?? []), assertion] };
+    return {
+      ...step,
+      assertions: [...(step.assertions ?? []), assertion],
+      metadata: {
+        ...(step.metadata ?? {}),
+        assertionProvenance: {
+          ...(((step.metadata as any)?.assertionProvenance ?? {}) as Record<string, string>),
+          [assertion.id]: meta.origin ?? 'ai',
+        },
+      },
+    };
+  });
+}
+
+// === Confirm 支撑：判定矩阵 + 执行日志收割 ===
+
+export interface HarvestedAssertionRun {
+  passed: boolean;
+  actualValue?: string;
+  message?: string;
+}
+
+/**
+ * 判定矩阵（纯函数，docs/07 §4-D）：
+ *   连续两次 PASS → ai-confirmed；一过一败/全败/证据不足 → needs-review
+ */
+export function decideConfirmationVerdict(runs: HarvestedAssertionRun[]): 'ai-confirmed' | 'needs-review' {
+  return runs.length >= 2 && runs.every((r) => r.passed) ? 'ai-confirmed' : 'needs-review';
+}
+
+/**
+ * 从生产执行引擎的日志中收割逐断言结果。
+ * ui-executor 的断言日志带结构化 metadata：{ assertionId, passed, actualValue }。
+ */
+export function harvestAssertionResults(
+  logs: Array<{ status?: string; level?: string; message?: string; metadata?: Record<string, unknown> }>,
+): Map<string, HarvestedAssertionRun[]> {
+  const perAssertion = new Map<string, HarvestedAssertionRun[]>();
+  for (const log of logs) {
+    const meta = log.metadata as { assertionId?: unknown; passed?: unknown; actualValue?: unknown } | undefined;
+    if (!meta || typeof meta.assertionId !== 'string' || typeof meta.passed !== 'boolean') continue;
+    if (!perAssertion.has(meta.assertionId)) perAssertion.set(meta.assertionId, []);
+    perAssertion.get(meta.assertionId)!.push({
+      passed: meta.passed,
+      actualValue: typeof meta.actualValue === 'string' ? meta.actualValue : undefined,
+      message: log.message,
+    });
+  }
+  return perAssertion;
+}
+
+// === Emit：来源三态落库 ===
+
+/** 确认运行报告的最小结构（结构化兼容 confirm/run.ts 的 ConfirmationReport） */
+export interface ConfirmationReportLike {
+  entries: Array<{
+    assertionId: string;
+    runs: Array<{ passed: boolean; actualValue?: string; message?: string }>;
+  }>;
+  infraFailureRuns: number;
+}
+
+export interface ReviewAssertionRecord {
+  assertion: StepAssertion;
+  /** 确认运行的逐次证据（actual 值），供人审 */
+  runs: Array<{ passed: boolean; actualValue?: string; message?: string }>;
+  reason: string;
+}
+
+function stampAssertionMessage(assertion: StepAssertion, stamp: string): StepAssertion {
+  return { ...assertion, message: assertion.message ? `${stamp} ${assertion.message}` : stamp };
+}
+
+function reviewReason(runs: Array<{ passed: boolean }>, infraFailureRuns: number, exercised: boolean): string {
+  if (!exercised) return 'not exercised by confirmation run';
+  if (infraFailureRuns > 0) return 'confirmation run infrastructure failure';
+  return runs.every(r => r.passed) || runs.some(r => r.passed)
+    ? 'flaky across confirmation runs'
+    : 'failed all confirmation runs';
+}
+
+/**
+ * Emit（阶段 E）：按确认结果落三态。
+ * - rule 来源：直接可执行，message 加 [rule] 标记；report 为 null 时同样处理。
+ * - ai 来源且两次 PASS → 可执行，message 加 [ai-confirmed×N]。
+ * - 其余（flaky/全败/未覆盖/基础设施故障）→ 移入 metadata.reviewAssertions
+ *   （不可执行），附各次运行证据；同时保留在原步骤日志语义中由调用方记录。
+ */
+export function emitAssertions(
+  steps: TestStep[],
+  report: ConfirmationReportLike | null,
+): TestStep[] {
+  return steps.map(step => {
+    const assertions = step.assertions ?? [];
+    if (assertions.length === 0) return step;
+    const provenance = ((step.metadata as any)?.assertionProvenance ?? {}) as Record<string, string>;
+    const kept: StepAssertion[] = [];
+    const review: ReviewAssertionRecord[] = [];
+
+    for (const assertion of assertions) {
+      const origin = provenance[assertion.id] ?? 'ai';
+      if (origin === 'rule') {
+        kept.push(stampAssertionMessage(assertion, '[rule]'));
+        continue;
+      }
+      const entry = report?.entries.find(e => e.assertionId === assertion.id);
+      const confirmed =
+        entry != null &&
+        report!.infraFailureRuns === 0 &&
+        entry.runs.length >= 2 &&
+        entry.runs.every(r => r.passed);
+      if (confirmed) {
+        kept.push(stampAssertionMessage(assertion, `[ai-confirmed×${entry!.runs.length}]`));
+      } else {
+        review.push({
+          assertion,
+          runs: entry?.runs ?? [],
+          reason: reviewReason(entry?.runs ?? [], report?.infraFailureRuns ?? 0, entry != null),
+        });
+      }
+    }
+
+    if (review.length === 0) {
+      return { ...step, assertions: kept };
+    }
+    const existingReview = ((step.metadata as any)?.reviewAssertions ?? []) as ReviewAssertionRecord[];
+    return {
+      ...step,
+      assertions: kept,
+      metadata: {
+        ...(step.metadata ?? {}),
+        reviewAssertions: [...existingReview, ...review],
+      },
+    };
   });
 }
 
 /**
- * 把已知参数值替换为 ${paramName} 模板语法。
- * 例如 parameters = { username: 'admin' }，则 data='admin' → data='${username}'。
+ * 把已知参数值替换为 {{paramName}} 模板语法（与执行引擎 interpolate 的 \{\{key\}\} 格式一致）。
+ * 例如 parameters = { username: 'admin' }，则 data='admin' → data='{{username}}'。
  */
 export function parameterize(steps: TestStep[], parameters: Record<string, string>): TestStep[] {
   if (Object.keys(parameters).length === 0) return steps;
@@ -149,15 +294,15 @@ export function parameterize(steps: TestStep[], parameters: Record<string, strin
     let next: TestStep = { ...step };
     if (next.data) {
       const paramName = valueToParam.get(next.data);
-      if (paramName) next = { ...next, data: `\${${paramName}}` };
+      if (paramName) next = { ...next, data: `{{${paramName}}}` };
     }
-    // 断言期望值同步参数化（如 UI_VALUE EQUALS admin → ${username}）
+    // 断言期望值同步参数化（如 UI_VALUE EQUALS admin → {{username}}）
     if (next.assertions && next.assertions.length > 0) {
       next = {
         ...next,
         assertions: next.assertions.map(a =>
           a.expectedValue && valueToParam.has(a.expectedValue)
-            ? { ...a, expectedValue: `\${${valueToParam.get(a.expectedValue)!}}` }
+            ? { ...a, expectedValue: `{{${valueToParam.get(a.expectedValue)!}}}` }
             : a,
         ),
       };

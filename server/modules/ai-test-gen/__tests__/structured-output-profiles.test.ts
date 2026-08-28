@@ -55,7 +55,7 @@ function makeQualityCase(overrides: Record<string, unknown> = {}) {
     techniqueApplied: 'Equivalence Partitioning',
     preconditions: [],
     testData: [],
-    steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+    steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
     tags: [],
     status: 'approved',
     reviewSummary: 'ok',
@@ -76,7 +76,7 @@ function makeDesignerCase(overrides: Record<string, unknown> = {}) {
     techniqueApplied: 'Equivalence Partitioning',
     preconditions: [],
     testData: [],
-    steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+    steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
     postconditions: [],
     tags: [],
     selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
@@ -117,7 +117,7 @@ function withoutField<T extends Record<string, unknown>>(value: T, field: keyof 
 describe('qualityOutputProfile validation', () => {
   it.each(['action', 'expected'] as const)('rejects a step missing %s', (field) => {
     const step = withoutField(
-      { stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' },
+      { stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click' } },
       field,
     );
 
@@ -129,7 +129,7 @@ describe('qualityOutputProfile validation', () => {
   it('rejects null step numbers instead of defaulting them', () => {
     expect(() => qualityOutputProfile.parse(qualityOutputProfile.normalize({
       finalTestCases: [makeQualityCase({
-        steps: [{ stepNumber: null, action: 'Enter credentials', expected: 'Dashboard shown' }],
+        steps: [{ stepNumber: null, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click' } }],
       })],
     }))).toThrow(/stepNumber/);
   });
@@ -361,7 +361,7 @@ describe('qualityOutputProfile', () => {
           techniqueApplied: 'Equivalence Partitioning',
           preconditions: [],
           testData: [],
-          steps: [{ stepNumber: '1', action: 'Click login', expected: 'Login starts' }],
+          steps: [{ stepNumber: '1', action: 'Click login', expected: 'Login starts', intent: { actionType: 'click' } }],
           tags: null,
           reviewSummary: 'Looks good',
           changeLog: [{ field: 'title', from: null, to: null, reason: 'Retained original title' }],
@@ -394,7 +394,7 @@ describe('qualityOutputProfile', () => {
         techniqueApplied: 'Equivalence Partitioning',
         preconditions: [],
         testData: [],
-        steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+        steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
         tags: [],
         status: 'approved',
         reviewSummary: 'ok',
@@ -443,7 +443,7 @@ describe('qualityOutputProfile', () => {
         techniqueApplied: 'Equivalence Partitioning',
         preconditions: [],
         testData: [],
-        steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+        steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
         tags: [],
         status: 'approved',
         reviewSummary: 'ok',
@@ -621,7 +621,7 @@ describe('qualityOutputProfile', () => {
           techniqueApplied: 'Equivalence Partitioning',
           preconditions: [],
           testData: [],
-          steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+          steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
           tags: [],
           status: 'approved',
           reviewSummary: 'ok',
@@ -640,6 +640,45 @@ describe('qualityOutputProfile', () => {
 });
 
 describe('designerOutputProfile', () => {
+  it('rejects a step whose action does not start with intent.actionType verb', () => {
+    const bad = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'Enter the username',
+        expected: 'Username shown',
+        intent: { actionType: 'fill', data: 'admin' },
+      }],
+    });
+    expect(() => designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [bad] })))
+      .toThrow(/must start with/);
+  });
+
+  it('accepts a step whose action starts with intent.actionType verb', () => {
+    const good = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'fill the username field with admin',
+        expected: 'Username shown',
+        intent: { data: 'admin' },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [good] }));
+    expect(parsed.draftTestCases[0].steps[0].intent.data).toBe('admin');
+  });
+
+  it('accepts camelCase actionType verbs written space-separated (waitFor → "wait for")', () => {
+    const ok = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'wait for the network response',
+        expected: 'API returns 200',
+        intent: { expectation: { kind: 'network', method: 'POST', urlPattern: '/api/x' } },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [ok] }));
+    expect(parsed.draftTestCases[0].steps[0].action).toBe('wait for the network response');
+  });
+
   it('wraps a top-level test case object and normalizes nullable fields', () => {
     const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({
       id: 'TC-1',
@@ -652,7 +691,7 @@ describe('designerOutputProfile', () => {
       techniqueApplied: 'Equivalence Partitioning',
       preconditions: [],
       testData: [],
-      steps: [{ stepNumber: '1', action: 'Enter username', expected: 'Username is shown' }],
+      steps: [{ stepNumber: '1', action: 'fill username', expected: 'Username is shown', intent: { actionType: 'fill', data: 'admin' } }],
       postconditions: null,
       tags: null,
       selfReview: {
@@ -672,7 +711,7 @@ describe('designerOutputProfile', () => {
 
   it.each(['action', 'expected'] as const)('rejects a step missing %s', (field) => {
     const step = withoutField(
-      { stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' },
+      { stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click' } },
       field,
     );
 
@@ -681,11 +720,44 @@ describe('designerOutputProfile', () => {
     ))).toThrow(new RegExp(field));
   });
 
-  it('rejects a missing selfReview object', () => {
-    expect(() => designerOutputProfile.parse(designerOutputProfile.normalize(
+it('defaults a missing selfReview (truncation tolerance — case must not fail the whole batch)', () => {
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize(
       withoutField(makeDesignerCase(), 'selfReview'),
-    ))).toThrow(/selfReview/);
+    ));
+    expect(parsed.draftTestCases[0].selfReview).toEqual({ score: 7, strengths: [], weaknesses: [], suggestions: [] });
   });
+
+it.each(['strengths', 'weaknesses', 'suggestions'] as const)(
+    'defaults selfReview.%s when omitted (truncation tolerance)',
+    (field) => {
+      const selfReview = withoutField(
+        { score: 8, strengths: [], weaknesses: [], suggestions: [] },
+        field,
+      );
+      const parsed = designerOutputProfile.parse(designerOutputProfile.normalize(
+        makeDesignerCase({ selfReview }),
+      ));
+      expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
+    },
+  );
+
+  it.each(['strengths', 'weaknesses', 'suggestions'] as const)(
+    'defaults selfReview.%s when null (truncation tolerance)',
+    (field) => {
+      const parsed = designerOutputProfile.parse(designerOutputProfile.normalize(
+        makeDesignerCase({
+          selfReview: {
+            score: 8,
+            strengths: [],
+            weaknesses: [],
+            suggestions: [],
+            [field]: null,
+          },
+        }),
+      ));
+expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
+    },
+  );
 
   it.each(['preconditions', 'testData', 'steps'] as const)(
     'rejects an omitted required %s collection',
@@ -705,43 +777,12 @@ describe('designerOutputProfile', () => {
     },
   );
 
-  it.each(['strengths', 'weaknesses', 'suggestions'] as const)(
-    'rejects an omitted selfReview.%s collection',
-    (field) => {
-      const selfReview = withoutField(
-        { score: 8, strengths: [], weaknesses: [], suggestions: [] },
-        field,
-      );
-
-      expect(() => designerOutputProfile.parse(designerOutputProfile.normalize(
-        makeDesignerCase({ selfReview }),
-      ))).toThrow(new RegExp(field));
-    },
-  );
-
-  it.each(['strengths', 'weaknesses', 'suggestions'] as const)(
-    'rejects null for required selfReview.%s',
-    (field) => {
-      expect(() => designerOutputProfile.parse(designerOutputProfile.normalize(
-        makeDesignerCase({
-          selfReview: {
-            score: 8,
-            strengths: [],
-            weaknesses: [],
-            suggestions: [],
-            [field]: null,
-          },
-        }),
-      ))).toThrow(new RegExp(field));
-    },
-  );
-
   it.each([null, '', ' ', true, false])(
     'rejects invalid stepNumber input %s instead of defaulting it',
     (stepNumber) => {
       expect(() => designerOutputProfile.parse(designerOutputProfile.normalize(
         makeDesignerCase({
-          steps: [{ stepNumber, action: 'Enter credentials', expected: 'Dashboard shown' }],
+          steps: [{ stepNumber, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click' } }],
         }),
       ))).toThrow(/stepNumber/);
     },
@@ -762,7 +803,7 @@ describe('designerOutputProfile', () => {
         techniqueApplied: 'Equivalence Partitioning',
         preconditions: [],
         testData: [],
-        steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+        steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
         postconditions: [],
         tags: [],
         selfReview: {
@@ -846,7 +887,7 @@ describe('designerOutputProfile', () => {
           techniqueApplied: 'Equivalence Partitioning',
           preconditions: [],
           testData: [],
-          steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Dashboard shown' }],
+          steps: [{ stepNumber: 1, action: 'click credentials', expected: 'Dashboard shown', intent: { actionType: 'click', targetHint: 'Sign in button' } }],
           postconditions: [],
           tags: [],
           selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
@@ -882,8 +923,8 @@ describe('designerOutputProfile', () => {
         preconditions: [],
         testData: [],
         steps: [
-          { stepNumber: 1, action: 'Submit credentials', expected: 'Auth API returns 200' },
-          { stepNumber: 2, action: 'Wait for redirect', expected: 'Dashboard renders' },
+          { stepNumber: 1, action: 'click submit', expected: 'Auth API returns 200', intent: { actionType: 'click' } },
+          { stepNumber: 2, action: 'waitFor redirect', expected: 'Dashboard renders', intent: { actionType: 'waitFor', expectation: { kind: 'url', value: '/dashboard' } } },
         ],
         postconditions: [],
         tags: [],
@@ -914,7 +955,7 @@ describe('designerOutputProfile', () => {
           preconditions: [],
           testData: [],
           steps: [
-            { stepNumber: 1, action: 'Submit credentials', expected: 'Auth API returns 200' },
+            { stepNumber: 1, action: 'click submit', expected: 'Auth API returns 200', intent: { actionType: 'click' } },
           ],
           postconditions: [],
           tags: [],
@@ -935,7 +976,7 @@ describe('designerOutputProfile', () => {
           techniqueApplied: 'Equivalence Partitioning',
           preconditions: [],
           testData: [],
-          steps: [{ stepNumber: 1, action: 'Enter empty password', expected: 'Validation error shown' }],
+          steps: [{ stepNumber: 1, action: 'fill empty password', expected: 'Validation error shown', intent: { actionType: 'fill', data: 'weakpass' } }],
           postconditions: [],
           tags: [],
           selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
@@ -964,7 +1005,7 @@ describe('designerOutputProfile', () => {
         preconditions: [],
         testData: [],
         steps: [
-          { stepNumber: 1, action: 'Click login', expected: 'API returns 200; dashboard renders' },
+          { stepNumber: 1, action: 'Click login', expected: 'API returns 200; dashboard renders', intent: { actionType: 'click' } },
         ],
         postconditions: [],
         tags: [],
@@ -993,7 +1034,7 @@ describe('designerOutputProfile', () => {
         techniqueApplied: 'Equivalence Partitioning',
         preconditions: [],
         testData: [],
-        steps: [{ stepNumber: 1, action: 'Click login', expected: longExpected }],
+        steps: [{ stepNumber: 1, action: 'Click login', expected: longExpected, intent: { actionType: 'click' } }],
         postconditions: [],
         tags: [],
         selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
@@ -1020,7 +1061,7 @@ describe('designerOutputProfile', () => {
         techniqueApplied: 'Equivalence Partitioning',
         preconditions: [],
         testData: [],
-        steps: [{ stepNumber: 1, action: 'Enter credentials', expected: 'Field shows value' }],
+        steps: [{ stepNumber: 1, action: 'fill credentials', expected: 'Field shows value', intent: { actionType: 'fill', data: 'admin' } }],
         postconditions: [],
         tags: [],
         selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },

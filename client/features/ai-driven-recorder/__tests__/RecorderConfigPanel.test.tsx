@@ -111,6 +111,45 @@ describe('RecorderConfigPanel execution position', () => {
   });
 });
 
+describe('RecorderConfigPanel assertion compiler toggle', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.removeItem('ai-recorder-config');
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.removeItem('ai-recorder-config');
+  });
+
+  it('defaults to off and omits nothing when untouched', () => {
+    seedReadyConfig();
+    const { onStart } = renderPanel({}, { preselect: true });
+    fireEvent.click(screen.getByRole('button', { name: /start ai recording/i }));
+
+    const payload = onStart.mock.calls[0][0];
+    expect(payload.options.enableCompilePipeline).toBe(false);
+  });
+
+  it('toggling on sends enableCompilePipeline and persists across remounts', () => {
+    seedReadyConfig();
+    const first = renderPanel({}, { preselect: true });
+    fireEvent.click(screen.getByTestId('compile-pipeline-toggle'));
+    expect(JSON.parse(localStorage.getItem('ai-recorder-config') || '{}').compilePipeline).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: /start ai recording/i }));
+    expect(onStartMock(first)).toMatchObject({ enableCompilePipeline: true });
+    first.unmount();
+
+    renderPanel({}, { preselect: true });
+    // remount 后开关仍为开（aria/样式状态经 persisted config 恢复）
+    expect(JSON.parse(localStorage.getItem('ai-recorder-config') || '{}').compilePipeline).toBe(true);
+  });
+
+  function onStartMock(handle: ReturnType<typeof renderPanel>) {
+    return handle.onStart.mock.calls[0][0].options;
+  }
+});
+
 describe('RecorderConfigPanel start URL override', () => {
   beforeEach(() => {
     vi.clearAllMocks();

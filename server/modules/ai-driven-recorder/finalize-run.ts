@@ -13,7 +13,21 @@ import type { AiDrivenRecorderRepository } from './repository.ts';
 import { saveDraftSuite } from './draft-suite-saver.ts';
 import { saveSuite } from '../suites/repository.ts';
 import { nlCaseRepo } from '../nl-cases/repository.ts';
+import { confirmDraftSuite } from './confirmation.ts';
+import { randomId } from '../../shared/utils/index.ts';
 import type { TestSuite, TestCase, TestStep } from '../../../shared/contracts/index.ts';
+
+function safeParseOptions(raw: unknown): Record<string, any> | null {
+  if (raw && typeof raw === 'object') return raw as Record<string, any>;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
 
 export interface FinalizeRunDeps {
   repository: AiDrivenRecorderRepository;
@@ -67,6 +81,19 @@ export function finalizeRunCompletion(
         description: `AI 驱动录制生成的草稿套件，来源 NlCase: ${run.nl_case_id}`,
         cases: [testCase],
         position: 0,
+        // 将 NL 用例的 testData 转为套件变量（${key} 模板在运行期由执行引擎解析）。
+        // 按 key 去重（ai-test-gen 跨 condition 合并时可能产生重复 key），后者覆盖前者。
+        // id 必须全局唯一（suite_variables.id 是主键）——用 randomId，不能用 var-${key}
+        // （不同 suite 可能有同名 key，var-${key} 会跨 suite 撞主键）。
+        variables: [...new Map(
+          (nlCase?.testData ?? [])
+            .filter((td: any) => td && td.key)
+            .map((td: any) => [td.key, td]),
+        ).values()].map((td: any) => ({
+          id: randomId('var'),
+          key: td.key,
+          value: td.value,
+        })),
       };
       saveSuite(suite);
       if (nlCase) {
@@ -90,14 +117,27 @@ export function finalizeRunCompletion(
   });
   repository.updateRunStatus(runId, 'completed');
 
-  // SSE 广播
-  sseGateway.emit(runId, 'run:complete', {
+  // 编译管线（docs/07 阶段 D）：录制会话已结束、浏览器已关闭，
+  // 此处用生产执行引擎对 Draft Suite 做确认回放（fire-and-forget，不阻塞终态广播）。
+  // 管线模式下 run:complete 推迟到确认结束后由确认服务发出——
+  // 否则终态事件会关闭 SSE 流，confirm:complete 将永远无法到达前端（横幅卡死）。
+  const runOptions = safeParseOptions((run as any).options);
+  const durationMs = run.started_at ? Date.now() - new Date(run.started_at).getTime() : 0;
+  const runCompletePayload = {
     runId,
     suiteId,
     caseId,
     replayReport,
-    durationMs: run.started_at ? Date.now() - new Date(run.started_at).getTime() : 0,
-  });
+    durationMs,
+  };
+  if (runOptions?.enableCompilePipeline === true && suiteId && caseId) {
+    void confirmDraftSuite(
+      { sseGateway },
+      { runId, projectId: run.project_id, suiteId, caseId, runComplete: runCompletePayload },
+    ).catch(() => {}); // 内部已兜底，此处仅防 unhandled rejection
+  } else {
+    sseGateway.emit(runId, 'run:complete', runCompletePayload);
+  }
 
   return { suiteId, caseId };
 }

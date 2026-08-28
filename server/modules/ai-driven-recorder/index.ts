@@ -11,6 +11,7 @@ import { withErrorHandling } from '../../shared/http/async-handler.ts';
 import { AiDrivenRecorderController } from './controller.ts';
 import { AiDrivenRecorderRepository } from './repository.ts';
 import { createAiRecorderSseGateway, registerAiRecorderWsRelay } from './ws-relay.ts';
+import { recoverInterruptedRuns } from './recover.ts';
 
 const router = Router();
 
@@ -21,6 +22,14 @@ const controller = new AiDrivenRecorderController(sseGateway, repository);
 
 // 注册 WS Relay（监听 globalEventBus 的 RECORDING_EVENT）
 registerAiRecorderWsRelay({ sseGateway, repository });
+
+/**
+ * 启动时恢复被 WS 断线中断的 AI 录制 run（COMPLETE 事件丢失时 finalize 未执行）。
+ * 复用模块单例；幂等，可安全重复调用。
+ */
+export function recoverInterruptedAiRecorderRuns(): ReturnType<typeof recoverInterruptedRuns> {
+  return recoverInterruptedRuns({ repository, sseGateway });
+}
 
 function p(param: string | string[]): string {
   return typeof param === 'string' ? param : param[0];

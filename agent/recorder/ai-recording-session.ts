@@ -27,6 +27,11 @@ import { StepConsolidator } from './consolidation.ts';
 import { translateAction } from './translator.ts';
 import { refineDraftSuite, extractSecretValues, type RefinerOptions, type AiAssertionProposal } from './refiner.ts';
 import { buildStepDescription } from './recording-bridge.ts';
+import { collectEvidencePack, formatLegacyEnrichment, type EvidencePack } from './ground.ts';
+import { deriveRuleProposals, findCoveringRule } from './compile/rules.ts';
+import { createStagehandProposer, type ProposerAdapter } from './compile/proposer.ts';
+import { passesGate, type GateProposal } from './compile/gate.ts';
+import { getExpectationMapping, parseActionVerb, resolveIntentData, type NlStepIntent } from '../../shared/recording/nl-intent.ts';
 import type { RecorderStepPayload, LocatorRef } from './protocol.ts';
 import type {
   TestStep,
@@ -76,6 +81,13 @@ export interface AIRecordingSessionParams {
     headless?: boolean;
     maxRetriesPerStep?: number;
     timeoutPerStep?: number;
+    /**
+     * 编译管线（docs/07 §4-C）：规则层 → 覆盖裁决 → AI 提议 → 编译门。
+     * 默认 false 走旧路径（行为零变更）；开启后断言生成与验证分离，
+     * 规则可覆盖时不调 LLM，AI 不确定时只记日志不落库。
+     * 确认回放（阶段 D）由 Server 端在会话结束后执行，Agent 不参与。
+     */
+    enableCompilePipeline?: boolean;
   };
   /** 中止信号：AI_RECORDER_STOP 触发 AbortController.abort() 后，session 在步骤边界终 — ?*/
   signal?: AbortSignal;
@@ -339,6 +351,13 @@ export class AIRecordingSession {
   private stagehand: any | null = null;
   private consolidator = new StepConsolidator();
   private recordedSteps: RecorderStepPayload[] = [];
+  /** 原始 payload 流（未经 consolidator 缓冲），按 nlStepIndex 分组——Ground 的元素清单来源 */
+  private rawPayloadsByNlStep = new Map<number, RecorderStepPayload[]>();
+  /** 各 NL 步骤边界采集的证据包，flush 后随断言一起挂载到最后一条 payload */
+  private evidenceByNlStep = new Map<number, EvidencePack>();
+  /** 编译管线开关与 AI 裁决 Seam（start 时装配） */
+  private compilePipeline = false;
+  private proposer: ProposerAdapter | null = null;
   private stepBoundaries: NlStepBoundary[] = [];
   private isHeadless = false;
   private timeoutMs = DEFAULT_TIMEOUT_PER_STEP_MS;
@@ -346,12 +365,15 @@ export class AIRecordingSession {
   private pendingAssertions = new Map<number, AiAssertionProposal>();
   /** 当前正在执行 — ?NL 步骤索引 — ?-based），onActionAdded 产出 payload 时打 — ?*/
   private currentNlStepIndex = -1;
+  /** NL 用例的 testData 键值对——用于解析 intent.data 里的 ${key} 引用 */
+  private testDataParams: Record<string, string> = {};
   /** 录制期间捕获 — ?XHR/Fetch API 调用（按 NL 步骤打标），用于生成 API 断言（waitForNetwork — ?*/
   private capturedApis: Array<{
     nlStepIndex: number;
     method: string;
     url: string;
     status: number;
+    responseBody?: string;
     capturedAt: number;
   }> = [];
 
@@ -364,7 +386,12 @@ export class AIRecordingSession {
     const maxRetries = options.maxRetriesPerStep ?? 2;
     this.pendingAssertions.clear();
     this.capturedApis = [];
+    this.rawPayloadsByNlStep.clear();
+    this.evidenceByNlStep.clear();
     this.currentNlStepIndex = -1;
+    this.testDataParams = Object.fromEntries(
+      (nlCase.testData ?? []).map((td) => [td.key, td.value]),
+    );
 
     // Suppress AI SDK System messages warning (Stagehand passes system prompts in messages array)
     const originalWarn = console.warn;
@@ -426,6 +453,12 @@ export class AIRecordingSession {
     });
     await this.stagehand.init();
 
+    // 编译管线装配（Seam：AI 裁决 adapter 复用 withStepTimeout 超时保护）
+    this.compilePipeline = options.enableCompilePipeline === true;
+    this.proposer = this.compilePipeline
+      ? createStagehandProposer(this.stagehand, (op, p) => this.withStepTimeout(op, p))
+      : null;
+
     // 4. 挂载 _enableRecorder + 网络监视
     //    我们自己启动的浏览器，直接连接 CDP 挂载 _enableRecorder。
     //    网络监视挂在我们自己的 page 上（真实 Playwright page，支持所有事件）。
@@ -443,17 +476,34 @@ export class AIRecordingSession {
       try {
         if (req.resourceType() !== 'xhr' && req.resourceType() !== 'fetch') return;
         if (req.method() === 'OPTIONS') return;
+        const nlStepIndex = this.currentNlStepIndex;
+        const method = req.method();
         const response = await req.response();
         const status = response ? response.status() : 0;
         if (status === 0) return;
-        const nlStepIndex = this.findNearestPayloadStep(this.currentNlStepIndex);
+        let responseBody: string | undefined;
+        if (response && ['POST', 'PUT', 'PATCH'].includes(method)) {
+          try {
+            const text = await response.text();
+            responseBody = text.length > 10_000 ? text.slice(0, 10_000) : text;
+          } catch { /* 响应体不可读 */ }
+        }
         this.capturedApis.push({
           nlStepIndex,
-          method: req.method(),
+          method,
           url: req.url(),
           status,
+          responseBody,
           capturedAt: Date.now(),
         });
+        // 实时网络日志（类似 Run Test）：请求完成即打印，不再等步骤结束
+        try {
+          const url = new URL(req.url());
+          const pathname = url.pathname.length > 60 ? url.pathname.slice(0, 57) + '...' : url.pathname;
+          const logMsg = `[net] ${method} ${pathname} → ${status}`;
+          console.log(logMsg);
+          // 同时写入步骤日志，step:complete 时随时间线一并上报
+        } catch { /* URL 解析失败不阻断 */ }
       } catch {
         // 网络捕获失败不阻断录制
       }
@@ -468,6 +518,9 @@ export class AIRecordingSession {
           // 打标当前 NL 步骤索引：payload 经 consolidator 流式缓冲，
           // 必须在进 consolidator 前打标，断言挂载按此标记分组
           step.metadata = { ...(step.metadata ?? {}), nlStepIndex: this.currentNlStepIndex };
+          // 原始流另存（consolidator 会缓冲 click/fill，验证时刻边界 payload 未必已产出）
+          if (!this.rawPayloadsByNlStep.has(this.currentNlStepIndex)) this.rawPayloadsByNlStep.set(this.currentNlStepIndex, []);
+          this.rawPayloadsByNlStep.get(this.currentNlStepIndex)!.push(step);
           for (const consolidated of this.consolidator.add(step)) {
             this.recordedSteps.push(consolidated);
             onConsolidatedStep(consolidated);
@@ -543,12 +596,21 @@ export class AIRecordingSession {
           const last = groupPayloads[groupPayloads.length - 1];
           const lastMeta = (last.metadata ?? {}) as any;
 
-          // 断言挂载（AI 建议 > 规则兜底）
+          // 断言挂载（AI 建议 > 规则兜底）。
+          // 编译管线的提议带 targetPayloadIndex——精准落到它依托的 payload
+          // （回放时该步骤的 target 即被观测元素）；旧路径无此字段，仍挂最后一条。
           const proposal = this.pendingAssertions.get(idx);
           const assertion = proposal ?? ruleBasedAssertion(groupPayloads);
           if (assertion) {
-            lastMeta.aiAssertion = assertion;
-            console.log(`[ASSERT|step:${idx}→${targetIdx}] ${assertion.source} ${assertion.operator} "${assertion.expectedValue ?? ''}"${proposal ? ' (ai)' : ' (rule)'}`);
+            const bindIdx = (assertion as any).targetPayloadIndex;
+            const holder = (typeof bindIdx === 'number' && groupPayloads[bindIdx]) ? groupPayloads[bindIdx] : last;
+            const holderMeta = ((holder.metadata ?? {}) as any);
+            holderMeta.aiAssertion = assertion;
+            const evidence = this.evidenceByNlStep.get(idx) ?? this.evidenceByNlStep.get(targetIdx);
+            if (evidence) holderMeta.evidence = evidence;
+            holder.metadata = holderMeta;
+            const originTag = proposal ? `(${(proposal as any).origin ?? 'ai'})` : '(fallback)';
+            console.log(`[ASSERT|step:${idx}${holder !== last ? `:bind${bindIdx}` : ''}→${targetIdx}] ${assertion.source} ${assertion.operator} "${assertion.expectedValue ?? ''}" ${originTag}`);
           }
 
           // API 断言：优先写操作，否则该步骤最后一个捕获的调用
@@ -588,10 +650,15 @@ export class AIRecordingSession {
         refinerOptions,
       );
 
-      const suiteSkeleton = buildSuiteSkeleton(nlCase, refined.steps);
+      // 7. Confirm（阶段 D）已迁移至 Server 端：录制会话结束（浏览器关闭）后，
+      //    由 finalize-run 用生产执行引擎对 Draft Suite 无头回放确认（docs/07）。
+      //    Agent 仅上报带临时断言 + provenance 的 refined steps。
+      const finalSteps = refined.steps;
+
+      const suiteSkeleton = buildSuiteSkeleton(nlCase, finalSteps);
 
       return {
-        steps: refined.steps,
+        steps: finalSteps,
         stepBoundaries: this.stepBoundaries,
         replayCandidateSuite: suiteSkeleton,
       };
@@ -650,14 +717,61 @@ export class AIRecordingSession {
       expected: nlStep.expected,
     });
 
+    // --- 阶段 0: 动作类型自 action 文本首词解析 + intent 分派（docs/08 §3.2） ---
+    const intent = (nlStep as any).intent as NlStepIntent | undefined;
+    const verb = parseActionVerb(nlStep.action);
+    if (intent) {
+      log('info', `intent: action=${verb ?? '?'}${intent.expectation ? ` expectation.kind=${intent.expectation.kind}` : ''}`);
+    }
+    if (verb === 'navigate' && intent?.data) {
+      // 导航直达——确定性 page.goto，省一次 Stagehand LLM 调用
+      // intent.data 可能是 ${key} 引用（解析为 testData 实际 URL）、相对路径（基于 origin 解析）、或绝对 URL
+      const rawTarget = resolveIntentData(intent.data, this.testDataParams) ?? intent.data;
+      try {
+        const target = /^https?:\/\//i.test(rawTarget)
+          ? rawTarget
+          : new URL(rawTarget, page.url()).href;
+        await page.goto(target, { waitUntil: 'load' });
+        log('info', `navigate: goto ${target}`);
+      } catch (err: any) {
+        log('error', `navigate failed: ${err?.message?.slice(0, 200)}`);
+      }
+      return this.finalizeStep(nlStepIndex, nlStep, startStepIdx, stepStartedAt, stepLogs, emit, page);
+    }
+    if (verb === 'verify') {
+      // 纯验证步骤——不 act，直接取证+编译（解决"落盘消失"问题）
+      log('info', 'verify: skipping act, proceeding to evidence + compile');
+      return this.finalizeStep(nlStepIndex, nlStep, startStepIdx, stepStartedAt, stepLogs, emit, page);
+    }
+    if (verb === 'waitFor' && intent?.expectation?.kind === 'network') {
+      // 等待网络响应——确定性 waitForResponse
+      try {
+        const urlPattern = intent.expectation.urlPattern || intent.expectation.value || '';
+        const method = intent.expectation.method || '';
+        log('info', `waitFor: network ${method} ${urlPattern}`);
+        if (urlPattern) {
+          await page.waitForResponse(
+            (res) => (!method || res.request().method() === method) && res.url().includes(urlPattern),
+            { timeout: 15_000 },
+          ).catch(() => {});
+        }
+      } catch (err: any) {
+        log('warn', `waitFor network failed: ${err?.message?.slice(0, 200)}`);
+      }
+      return this.finalizeStep(nlStepIndex, nlStep, startStepIdx, stepStartedAt, stepLogs, emit, page);
+    }
+
     // --- 阶段 1: 执行 act()（带脏状态自愈重 — ?+ lazy observe — ?--
     let actSuccess = false;
     let observeHint: string | null = null;
+    // intent.data 解析：将 ${key} 引用或裸键名解析为 testData 实际值
+    const resolvedData = resolveIntentData(intent?.data, this.testDataParams);
+    const dataSuffix = resolvedData ? ` (Input value: "${resolvedData}")` : '';
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const actInstruction = observeHint
-          ? `${nlStep.action} (Context: ${observeHint})`
-          : nlStep.action;
+          ? `${nlStep.action}${dataSuffix} (Context: ${observeHint})`
+          : `${nlStep.action}${dataSuffix}`;
         console.log(`[ACT|step:${nlStepIndex}|attempt:${attempt}] instruction: ${actInstruction}`);
         log('info', `act attempt ${attempt}: ${actInstruction}`);
         await this.withStepTimeout('act', this.stagehand!.act(actInstruction, { page }));
@@ -787,7 +901,14 @@ export class AIRecordingSession {
       let actualUrl = '';
       try { actualUrl = await page.url(); } catch { /* ignore */ }
       log('info', `expected: "${nlStep.expected}"`);
-      const enrichment = await this.collectVerificationText(page);
+      // Ground（阶段 B）：采集证据包，并派生旧版 enrichment 字符串保持验证逻辑兼容
+      const evidence = await collectEvidencePack(page, {
+        nlStepIndex,
+        payloads: this.rawPayloadsByNlStep.get(nlStepIndex) ?? [],
+        networkCalls: this.capturedApis.filter(a => a.nlStepIndex === nlStepIndex),
+      });
+      this.evidenceByNlStep.set(nlStepIndex, evidence);
+      const enrichment = formatLegacyEnrichment(evidence);
       log('info', `actual page context: ${enrichment ? `${enrichment.length} chars  — ?excerpt: "${enrichment.slice(0, 300)}"` : 'unavailable'}`);
 
       let verified = false;
@@ -900,6 +1021,9 @@ export class AIRecordingSession {
       }
       if (!verified) {
         // 录制语义：操作已成功捕获，验证未通过只降级为警告，不判步骤失败 — ?
+        if (this.compilePipeline) {
+          log('info', 'compile skipped: expected not met at record time (no assertion compiled)');
+        }
         const warning = `expected not met after all checks  — ?expected: "${nlStep.expected.slice(0, 120)}"`;
         console.warn(`[VERIFY|step:${nlStepIndex}] warning: ${warning}`);
         log('warn', `verification FAILED via all checks  — ?${warning}`);
@@ -914,6 +1038,10 @@ export class AIRecordingSession {
         });
         return { nlStepIndex, startStepIdx, endStepIdx: this.recordedSteps.length };
       }
+      // 断言产出：编译管线（规则→覆盖裁决→AI 提议→编译门）或旧路径
+      if (this.compilePipeline) {
+        await this.compileAssertions(nlStepIndex, nlStep, evidence, page, log);
+      } else {
       // 按动作类型规范化 AI 建议（field 强制 UI_VALUE；navigation 强制 UI_PAGE_URL — ?
       // button 禁止 value  — ?source），非法组合丢弃并用规则兜底 — ?
       let finalAssertion: AiAssertionProposal | null =
@@ -935,6 +1063,7 @@ export class AIRecordingSession {
         this.pendingAssertions.set(nlStepIndex, { ...finalAssertion, expectedText: nlStep.expected });
         log('info', `assertion stored (${stepKind}): ${finalAssertion.source} ${finalAssertion.operator} "${finalAssertion.expectedValue ?? ''}"`);
       }
+      }
       log('info', `verification PASSED via ${verifiedVia}`);
     }
 
@@ -950,46 +1079,200 @@ export class AIRecordingSession {
   }
 
   /**
-   * 找到 fromIndex 或其前面最近的、实际产出了 recorded payload 的 NL 步骤索引。
-   * 用于网络调用归附：无元素依托的步骤（如"等待响应"）的 API 调用
-   * 应归附到前面最近的按钮/输入步骤，waitForNetwork 才有 target 可用。
+   * finalizeStep：intent 分派的 verify/navigate/waitFor 步骤的收尾——
+   * 取证 + 编译 + 发射 step:complete（复用主路径的验证后逻辑，但跳过 act 失败处理）。
    */
-  private findNearestPayloadStep(fromIndex: number): number {
-    for (let i = fromIndex; i >= 0; i--) {
-      if (this.recordedSteps.some(p => (p.metadata as any)?.nlStepIndex === i)) {
-        return i;
-      }
+  private async finalizeStep(
+    nlStepIndex: number,
+    nlStep: NlTestCaseStep,
+    startStepIdx: number,
+    stepStartedAt: number,
+    stepLogs: Array<{ t: number; level: 'info' | 'warn' | 'error'; message: string }>,
+    emit: (event: string, data: any) => void,
+    page: Page,
+  ): Promise<NlStepBoundary> {
+    const log = (level: 'info' | 'warn' | 'error', message: string) => {
+      stepLogs.push({ t: Date.now() - stepStartedAt, level, message });
+    };
+
+    if (nlStep.expected && this.compilePipeline) {
+      const evidence = await collectEvidencePack(page, {
+        nlStepIndex,
+        payloads: this.rawPayloadsByNlStep.get(nlStepIndex) ?? [],
+        networkCalls: this.capturedApis.filter(a => a.nlStepIndex === nlStepIndex),
+      });
+      this.evidenceByNlStep.set(nlStepIndex, evidence);
+      await this.compileAssertions(nlStepIndex, nlStep, evidence, page, log);
     }
-    return fromIndex;
+
+    emit('step:complete', {
+      nlStepIndex,
+      instruction: nlStep.action,
+      expected: nlStep.expected,
+      recordedStepCount: this.recordedSteps.length - startStepIdx,
+      durationMs: Date.now() - stepStartedAt,
+      logs: [...stepLogs, ...this.apiLogEntries(nlStepIndex, stepStartedAt)],
+    });
+    return { nlStepIndex, startStepIdx, endStepIdx: this.recordedSteps.length };
   }
 
   /**
-   * 收集验证兜底文本：页面可见文本 + 输入框实际值。
-   * Stagehand 的 pageText 是可访问性树，不含 input value 和渲染文本。
-   * 全程 try/catch + 有界采集，失败不阻断验证主流程。
+   * Compile（阶段 C）：规则层 → 覆盖裁决 → AI 提议 → 编译门。
+   * 产物写入 pendingAssertions；任何降级路径只记日志，不硬塞（docs/07 §4-C）。
    */
-  private async collectVerificationText(page: Page): Promise<string> {
+  private async compileAssertions(
+    nlStepIndex: number,
+    nlStep: NlTestCaseStep,
+    evidence: EvidencePack,
+    page: Page,
+    log: (level: 'info' | 'warn' | 'error', message: string) => void,
+  ): Promise<void> {
+    const payloads = this.rawPayloadsByNlStep.get(nlStepIndex) ?? [];
+    const ruleProps = deriveRuleProposals(payloads);
+
+    // verify/waitFor 类步骤无自身 payload——向前回退到最近有动作的边界，
+    // 复用其证据（actedElements）与依托序号，元素依托断言才有过编译门的资格。
+    let effEvidence = evidence;
+    let effPayloads = payloads;
+    if (payloads.length === 0) {
+      for (let i = nlStepIndex - 1; i >= 0; i--) {
+        const g = this.rawPayloadsByNlStep.get(i);
+        if (g && g.length > 0) {
+          effPayloads = g;
+          effEvidence = this.evidenceByNlStep.get(i) ?? evidence;
+          log('info', `compile: elementless boundary — walked back to step ${i} for evidence/target`);
+          break;
+        }
+      }
+    }
+
+    let candidate: GateProposal | null = null;
+
+    // 0. intent 驱动（docs/08 §3.2）：有结构化期望分类时按映射表定 source，零 LLM
+    // 但 API/URL 相关期望必须由该边界**真实的网络捕获**（capturedApis）背书——
+    // AI 的 urlPattern / URL 期望只作候选，不匹配真实捕获就丢弃，不硬猜。
+    const intent = (nlStep as any).intent as NlStepIntent | undefined;
+    const intentKind = intent?.expectation?.kind;
+
+    // 网络相关期望（network / api-body / url 里可能影响跳转）先查真实捕获
+    const boundaryApis = effEvidence.networkCalls ?? [];
+    if (intentKind === 'network' || intentKind === 'api-body' || intentKind === 'url') {
+      const want = intent?.expectation?.urlPattern ?? intent?.expectation?.value ?? '';
+      const wantMethod = intent?.expectation?.method ?? '';
+      const matched = boundaryApis.some(a =>
+        wantMethod ? a.method === wantMethod && a.url.includes(want) : a.url.includes(want) || a.pathname.includes(want),
+      );
+      if (!matched && boundaryApis.length === 0) {
+        log('warn', `compile: intent ${intentKind} has NO captured network calls — refusing to fabricate (expected API must be backed by real capture)`);
+        return;  // 不落断言，只记日志
+      }
+      if (want && !matched && boundaryApis.length > 0) {
+        log('warn', `compile: intent ${intentKind} urlPattern "${want}" NOT in captured APIs [${boundaryApis.map(a => a.pathname).join('; ')}] — refusing to fabricate`);
+        return;
+      }
+      log('info', `compile: intent ${intentKind} backed by ${boundaryApis.length}真实网络捕获 ✓`);
+    }
+
+    if (intentKind && intentKind !== 'transient' && intentKind !== 'network') {
+      if (intentKind === 'api-body') {
+        // U5: API 响应体断言——API_BODY_JSON + JSONPath expression
+        candidate = {
+          source: 'API_BODY_JSON',
+          operator: 'CONTAINS',
+          expectedValue: intent?.expectation?.value,
+          expression: intent?.expectation?.expression,
+          origin: 'rule',
+          confidence: 1,
+          rationale: `from intent expectation.kind=api-body, expression=${intent?.expectation?.expression ?? '?'}`,
+        };
+        log('info', `compile: intent-driven api-body → API_BODY_JSON ${intent?.expectation?.expression ?? ''} CONTAINS "${intent?.expectation?.value ?? ''}"`);
+      } else {
+        const mapping = getExpectationMapping(intentKind);
+        if (mapping.sources.length > 0) {
+          const expectedValue = intent?.expectation?.value;
+          const lastPayloadIdx = effPayloads.length > 0 ? effPayloads.length - 1 : undefined;
+          candidate = {
+            source: mapping.sources[0],
+            operator: 'CONTAINS',
+            expectedValue,
+            targetPayloadIndex: lastPayloadIdx,
+            origin: 'rule',
+            confidence: 1,
+            rationale: `from intent expectation.kind=${intentKind}`,
+          };
+          log('info', `compile: intent-driven → ${candidate.source} CONTAINS "${expectedValue ?? ''}" (kind=${intentKind})`);
+        }
+      }
+    }
+
+    // 1. 确定性覆盖裁决：expected 已被规则覆盖 → 零 LLM
+    if (!candidate) {
+      candidate = findCoveringRule(nlStep.expected, ruleProps);
+      if (candidate) {
+        log('info', `compile: rule covers expected → ${candidate.source} ${candidate.operator} "${candidate.expectedValue ?? ''}"`);
+      } else {
+        // 2. AI 裁决（一次专用调用）；null/unverifiable 即"不确定"——只记日志
+        const adjudication = await this.proposer?.adjudicate({
+          expected: nlStep.expected,
+          actionText: nlStep.action,
+          evidence: effEvidence,
+          ruleCandidates: ruleProps,
+        });
+        if (!adjudication || adjudication.verdict === 'unverifiable') {
+          const why = adjudication?.rationale ? `, ${adjudication.rationale.slice(0, 120)}` : '';
+          log('warn', `compile: no reliable assertion (verdict=${adjudication?.verdict ?? 'null'}${why}) — logged for review only`);
+          return;
+        }
+        if (adjudication.verdict === 'covered') {
+          const idx = adjudication.bindsRuleCandidate ?? 0;
+          candidate = ruleProps[idx] ?? null;
+          log('info', `compile: ai confirms rule candidate [${idx}]`);
+        } else if (adjudication.proposal) {
+          const refRaw = adjudication.proposal.elementRefId;
+          candidate = {
+            source: adjudication.proposal.source,
+            operator: adjudication.proposal.operator,
+            expectedValue: adjudication.proposal.expectedValue,
+            targetPayloadIndex: refRaw != null && /^\d+$/.test(refRaw) ? Number(refRaw) : undefined,
+            origin: 'ai',
+            confidence: adjudication.confidence ?? 0.5,
+            rationale: adjudication.rationale,
+          };
+          log('info', `compile: ai proposed ${candidate.source} ${candidate.operator} "${candidate.expectedValue ?? ''}" (confidence=${(candidate.confidence ?? 0).toFixed(2)})`);
+        }
+      }
+    }
+    if (!candidate) return;
+
+    // 3. 编译门：任一不过即丢弃并记原因
+    const gateResult = await passesGate(candidate, effEvidence, page);
+    if (!gateResult.ok) {
+      log('warn', `compile gate rejected (${candidate.source}): ${gateResult.reason}`);
+      return;
+    }
+    this.pendingAssertions.set(nlStepIndex, { ...gateResult.proposal, expectedText: nlStep.expected });
+    log('info', `assertion compiled (${gateResult.proposal.origin}): ${gateResult.proposal.source} ${gateResult.proposal.operator} "${gateResult.proposal.expectedValue ?? ''}"`);
+  }
+
+  /**
+   * 美化响应体：JSON 缩进输出；非 JSON 文本截断；超长截断到 MAX_RESP_CHARS。
+   * 供步骤日志与 api-body 佐证阅读。
+   */
+  private static formatResponseBody(body: string): string {
+    const MAX = 600;
     try {
-      const result = await page.evaluate(() => {
-        const inputs = Array.from(document.querySelectorAll('input, textarea'))
-          .slice(0, 50)
-          .map((el) => {
-            const iel = el as HTMLInputElement;
-            const name = iel.name || iel.id || iel.type || 'input';
-            return `${name}: ${iel.value || ''}`;
-          });
-        const bodyText = (document.body?.innerText || '').slice(0, 5000);
-        return { inputs: inputs.join('\n'), bodyText };
-      });
-      return [result.inputs, result.bodyText].filter(Boolean).join('\n');
+      const parsed = JSON.parse(body);
+      const pretty = JSON.stringify(parsed, null, 2);
+      return pretty.length > MAX ? pretty.slice(0, MAX) + '\n  …(truncated)' : pretty;
     } catch {
-      return '';
+      return body.length > MAX ? body.slice(0, MAX) + '…' : body;
     }
   }
 
   /**
    * 该 NL 步骤期间捕获的 XHR/Fetch 调用，转为步骤日志条目。
    * 由终态事件发射时合并进 logs，UI 展开即可看到 API 调用时间线。
+   * 方法 + pathname + 状态码；POST/PUT/PATCH 附格式化响应体（独立行，缩进，可读）。
    */
   private apiLogEntries(nlStepIndex: number, stepStartedAt: number): Array<{ t: number; level: string; message: string }> {
     return this.capturedApis
@@ -997,10 +1280,20 @@ export class AIRecordingSession {
       .map(a => {
         let pathname = a.url;
         try { pathname = new URL(a.url).pathname; } catch { /* keep raw */ }
+        const base = `api: ${a.method} ${pathname} → ${a.status}`;
+        if (a.responseBody) {
+          const pretty = AIRecordingSession.formatResponseBody(a.responseBody);
+          return {
+            t: Math.max(0, a.capturedAt - stepStartedAt),
+            level: a.status >= 400 ? 'warn' as const : 'info' as const,
+            // 请求行与响应体分行展示，响应体缩进，避免挤在一行看不清
+            message: `${base}\n  resp:\n${pretty.split('\n').map(l => `    ${l}`).join('\n')}`,
+          };
+        }
         return {
           t: Math.max(0, a.capturedAt - stepStartedAt),
           level: a.status >= 400 ? 'warn' as const : 'info' as const,
-          message: `api: ${a.method} ${pathname} → ${a.status}`,
+          message: base,
         };
       });
   }

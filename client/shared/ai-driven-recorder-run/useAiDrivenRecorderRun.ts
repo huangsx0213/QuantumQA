@@ -50,6 +50,19 @@ export function useAiDrivenRecorderRun(
       case 'step:takeover':
         dispatch({ type: 'STEP_TAKEOVER', runId: data.runId, nlStepIndex: data.nlStepIndex, reason: data.reason });
         break;
+      case 'confirm:start':
+        dispatch({ type: 'CONFIRM_START', runId: data.runId });
+        break;
+      case 'confirm:complete':
+        dispatch({
+          type: 'CONFIRM_COMPLETE',
+          runId: data.runId,
+          completedRuns: data.completedRuns ?? 0,
+          confirmed: data.confirmedAssertionIds?.length ?? 0,
+          review: data.reviewAssertionIds?.length ?? 0,
+          blockedByInfraFailure: !!data.blockedByInfraFailure,
+        });
+        break;
       case 'run:complete':
         dispatch({ type: 'RUN_COMPLETE', runId: data.runId, suiteId: data.suiteId, caseId: data.caseId, replayReport: data.replayReport });
         break;

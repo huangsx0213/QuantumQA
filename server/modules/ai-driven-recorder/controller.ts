@@ -46,6 +46,8 @@ export interface StartRunRequest {
     headless?: boolean;
     maxRetriesPerStep?: number;
     timeoutPerStep?: number;
+    /** 编译管线（docs/07）：规则+AI 编译断言；确认回放由 Server 端在会话结束后执行 */
+    enableCompilePipeline?: boolean;
   };
 }
 
@@ -285,7 +287,11 @@ export class AiDrivenRecorderController {
     }));
   }
 
-  /** 中止并删除 run */
+  /**
+ * 中止/删除 run。两条语义：
+ *  - 进行中（running/refining/replaying）→ 软删除中止：发 STOP + 状态置 failed + 保留历史记录
+ *  - 已结束（completed/failed）→ 硬删除历史记录：物理删除 run 及其 step logs
+ */
   deleteRun(projectId: string, runId: string): { success: true } {
     const run = this.repository.getRun(runId);
     if (!run) throw new NotFoundError(`Run not found: ${runId}`);
@@ -293,22 +299,26 @@ export class AiDrivenRecorderController {
       throw new NotFoundError('Run does not belong to this project');
     }
 
-    // 如果 run 还在进行中：local 走进程内句柄 abort（避免向无关 agent 广播 STOP
+    const inProgress = run.status === 'running' || run.status === 'refining' || run.status === 'replaying';
+
+    // 进行中：local 走进程内句柄 abort（避免向无关 agent 广播 STOP
     // 误杀并发 agent 会话）；agent 保持既有 STOP 广播
-    if (run.status === 'running' || run.status === 'refining' || run.status === 'replaying') {
+    if (inProgress) {
       if (run.execution_mode === 'local') {
         getLocalRunHandle(runId)?.abort();
       } else {
         wsService.broadcast(AI_RECORDER_STOP_EVENT, { runId });
       }
+      // SSE 广播 run:error（让前端关闭连接）
+      this.sseGateway.emit(runId, 'run:error', { runId, error: 'Run aborted by user' });
+      this.sseGateway.cleanup(runId);
+      // 软删除：保留 run 记录与 step logs，状态置 failed 以便历史列表仍可查看
+      this.repository.updateRunStatus(runId, 'failed', 'Run aborted by user');
+    } else {
+      // 已完成的 run：硬删除历史记录（用户显式删除）
+      this.sseGateway.cleanup(runId);
+      this.repository.deleteRun(runId);
     }
-
-    // SSE 广播 run:error（让前端关闭连接）
-    this.sseGateway.emit(runId, 'run:error', { runId, error: 'Run aborted by user' });
-    this.sseGateway.cleanup(runId);
-
-    // 实际删除 run 及其 step logs
-    this.repository.deleteRun(runId);
 
     return { success: true };
   }

@@ -657,7 +657,7 @@ describe('AiDrivenRecorderController', () => {
   });
 
   describe('deleteRun', () => {
-    it('进行中的 run：发送 STOP + SSE 广播 run:error + cleanup + 删除 run', () => {
+    it('进行中的 run：发送 STOP + SSE 广播 run:error + cleanup + 软删除(状态置 failed)', () => {
       repository.getRun.mockReturnValue({
         id: 'run-1',
         project_id: 'proj-1',
@@ -668,10 +668,11 @@ describe('AiDrivenRecorderController', () => {
 
       expect(result).toEqual({ success: true });
       expect(wsService.broadcast).toHaveBeenCalledWith(AI_RECORDER_STOP_EVENT, { runId: 'run-1' });
-      expect(repository.deleteRun).toHaveBeenCalledWith('run-1');
+      expect(repository.updateRunStatus).toHaveBeenCalledWith('run-1', 'failed', 'Run aborted by user');
+      expect(repository.deleteRun).not.toHaveBeenCalled();
     });
 
-    it('已完成的 run：不发送 STOP 但仍删除 run', () => {
+    it('已完成的 run：硬删除历史记录（不发送 STOP 不改状态）', () => {
       repository.getRun.mockReturnValue({
         id: 'run-1',
         project_id: 'proj-1',
@@ -681,15 +682,31 @@ describe('AiDrivenRecorderController', () => {
       controller.deleteRun('proj-1', 'run-1');
 
       expect(wsService.broadcast).not.toHaveBeenCalled();
+      expect(repository.updateRunStatus).not.toHaveBeenCalled();
       expect(repository.deleteRun).toHaveBeenCalledWith('run-1');
     });
 
-    it('run 不存在时抛错，不调用 deleteRun', () => {
+    it('已失败的 run：硬删除历史记录', () => {
+      repository.getRun.mockReturnValue({
+        id: 'run-failed',
+        project_id: 'proj-1',
+        status: 'failed',
+      });
+
+      controller.deleteRun('proj-1', 'run-failed');
+
+      expect(wsService.broadcast).not.toHaveBeenCalled();
+      expect(repository.updateRunStatus).not.toHaveBeenCalled();
+      expect(repository.deleteRun).toHaveBeenCalledWith('run-failed');
+    });
+
+    it('run 不存在时抛错，不改状态不删除', () => {
       repository.getRun.mockReturnValue(undefined);
 
       const error = captureError(() => controller.deleteRun('proj-1', 'nonexistent'));
       expect(error).toBeInstanceOf(NotFoundError);
       expect(error).toMatchObject({ statusCode: 404, message: 'Run not found: nonexistent' });
+      expect(repository.updateRunStatus).not.toHaveBeenCalled();
       expect(repository.deleteRun).not.toHaveBeenCalled();
     });
 
@@ -711,7 +728,8 @@ describe('AiDrivenRecorderController', () => {
           AI_RECORDER_STOP_EVENT,
           { runId: 'run-local' },
         );
-        expect(repository.deleteRun).toHaveBeenCalledWith('run-local');
+        expect(repository.updateRunStatus).toHaveBeenCalledWith('run-local', 'failed', 'Run aborted by user');
+        expect(repository.deleteRun).not.toHaveBeenCalled();
       } finally {
         unregisterLocalRun('run-local');
       }

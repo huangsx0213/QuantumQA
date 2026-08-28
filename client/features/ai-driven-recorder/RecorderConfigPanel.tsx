@@ -59,6 +59,7 @@ interface SavedRecorderConfig {
   headless: boolean;
   maxRetries: number;
   timeoutPerStep: number;
+  compilePipeline: boolean;
 }
 
 function loadRecorderConfig(): SavedRecorderConfig | null {
@@ -83,6 +84,7 @@ const defaultRecorderConfig: SavedRecorderConfig = {
   headless: false,
   maxRetries: 2,
   timeoutPerStep: 30,
+  compilePipeline: false,
 };
 
 export function RecorderConfigPanel({
@@ -102,6 +104,7 @@ export function RecorderConfigPanel({
   const [timeoutPerStep, setTimeoutPerStep] = useState(savedConfig?.timeoutPerStep ?? defaultRecorderConfig.timeoutPerStep);
   const [executionMode, setExecutionMode] = useState<'agent' | 'local'>(savedConfig?.executionMode ?? defaultRecorderConfig.executionMode);
   const [startUrl, setStartUrl] = useState<string>(savedConfig?.startUrl ?? defaultRecorderConfig.startUrl);
+  const [compilePipeline, setCompilePipeline] = useState(savedConfig?.compilePipeline ?? defaultRecorderConfig.compilePipeline);
   const [error, setError] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
@@ -116,8 +119,9 @@ export function RecorderConfigPanel({
       headless,
       maxRetries,
       timeoutPerStep,
+      compilePipeline,
     });
-  }, [model, modelName, providerConfigId, executionMode, startUrl, headless, maxRetries, timeoutPerStep]);
+  }, [model, modelName, providerConfigId, executionMode, startUrl, headless, maxRetries, timeoutPerStep, compilePipeline]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -208,7 +212,12 @@ export function RecorderConfigPanel({
       model,
       executionMode,
       ...(normalizedStartUrl ? { startUrl: normalizedStartUrl } : {}),
-      options: { headless, maxRetriesPerStep: maxRetries, timeoutPerStep: timeoutPerStep * 1000 },
+      options: {
+        headless,
+        maxRetriesPerStep: maxRetries,
+        timeoutPerStep: timeoutPerStep * 1000,
+        enableCompilePipeline: compilePipeline,
+      },
     };
     const nlCaseSteps = (selectedCase?.steps ?? []).map((s: any) => ({
       sequence: s.sequence,
@@ -216,7 +225,7 @@ export function RecorderConfigPanel({
       expected: s.expected,
     }));
     onStart(config, nlCaseSteps);
-  }, [nlCaseId, providerConfigId, model, executionMode, startUrl, headless, maxRetries, timeoutPerStep, selectedCase, onStart]);
+  }, [nlCaseId, providerConfigId, model, executionMode, startUrl, headless, maxRetries, timeoutPerStep, compilePipeline, selectedCase, onStart]);
 
   // 即时警告：未填覆盖且选中用例解析不到起始 URL（不阻塞，仅提示）
   const startUrlWarning = useMemo(() => {
@@ -521,6 +530,22 @@ export function RecorderConfigPanel({
                 className={`relative w-10 h-5 rounded-full transition-colors ${headless ? 'bg-blue-500' : 'bg-slate-300'} disabled:opacity-50`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${headless ? 'translate-x-5' : ''}`} />
+              </button>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-white">
+              <div>
+                <div className="text-sm font-medium text-slate-700">Assertion Compiler</div>
+                <div className="text-[11px] text-slate-400">
+                  Rules + AI compile assertions, then headless replay confirms them (docs/07)
+                </div>
+              </div>
+              <button
+                onClick={() => !disabled && setCompilePipeline(!compilePipeline)}
+                disabled={disabled}
+                data-testid="compile-pipeline-toggle"
+                className={`relative w-10 h-5 rounded-full transition-colors ${compilePipeline ? 'bg-blue-500' : 'bg-slate-300'} disabled:opacity-50`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${compilePipeline ? 'translate-x-5' : ''}`} />
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3">

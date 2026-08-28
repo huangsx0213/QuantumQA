@@ -60,6 +60,63 @@ export async function startExecution(request: ExecutionRequest): Promise<{ repor
   return { reportId, runId };
 }
 
+/**
+ * 同步等待版用例执行（编译期确认运行专用，docs/07 阶段 D）。
+ *
+ * 与 startExecution 相同的完整生产管线（buildPayload → executeSingleCase →
+ * finalizeRun 落报告），但阻塞至运行结束并返回结构化日志——
+ * 确认服务据此收割逐断言结果。每次调用创建全新 UIExecutor（独立浏览器，
+ * 无录制会话残留状态）。本地并发互斥沿用 isRunActive 守卫。
+ */
+export async function startExecutionAndWait(
+  request: ExecutionRequest,
+): Promise<{ result: RunResult; logs: Array<{ stepId: string; status: string; level?: string; message: string; metadata?: Record<string, unknown> }> }> {
+  const runId = randomId('ai-pl');
+  const reportId = randomId('report');
+  const abortController = new AbortController();
+
+  db.prepare(`
+    INSERT INTO execution_runs (id, report_id, type, project_id, environment, suite_id, case_id, scenario_id, plan_id, status, started_at, agent_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?)
+  `).run(
+    runId,
+    reportId,
+    request.type,
+    request.projectId,
+    request.environment,
+    request.suiteId || null,
+    request.caseId || null,
+    request.scenarioId || null,
+    request.planId || null,
+    Date.now(),
+    request.agentId || null,
+  );
+
+  const logger = new ExecutionLogger(reportId);
+  setActiveRunLogger(reportId, logger);
+  registerRun(runId, { id: runId, abortController, isLocal: true });
+
+  const uiExecutor = new UIExecutor();
+  const startTime = Date.now();
+  let result: RunResult;
+  let displayName = `Execution: ${request.type}`;
+  try {
+    const built = await buildPayload(request, runId, reportId);
+    displayName = built.displayName;
+    result = await dispatchExecution(request, built.payload, logger, abortController.signal, uiExecutor, runId, built.displayName);
+    result.reportId = reportId;
+    result.durationMs = Date.now() - startTime;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    Log.for('exec').error(`Confirmation execution failed: ${message}`);
+    logger.log({ stepId: 'error', status: 'FAIL', message: `❌ Execution failed: ${message}` });
+    result = { reportId, status: 'FAILED', passRate: 0, totalCases: 0, passedCases: 0, failedCases: 0, durationMs: Date.now() - startTime };
+  }
+  await uiExecutor.cleanup().catch(() => {});
+  await finalizeRun(request, runId, reportId, logger, result, displayName, startTime, Date.now());
+  return { result, logs: logger.getLogs() as any };
+}
+
 // ─── Async Execution ───
 
 async function executeRunAsync(

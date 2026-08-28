@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { nlStepIntentSchema } from 'shared/recording/nl-intent.ts';
 import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
@@ -61,6 +62,9 @@ const QualityRuntimeSchema = z.object({
       steps: z.array(z.object({
         stepNumber: z.number(),
         action: z.string(),
+        // 统一测试标准（docs/08）：透传 Designer 产出的结构化意图。
+        // 可选——缺失时 Recorder 回退推断链路；prompt 要求原样保留不得改写。
+        intent: nlStepIntentSchema.optional(),
         // F19: refine each step's `expected` for atomicity.
         expected: z.string().superRefine((val, ctx) => {
           const r = atomicExpected(val);

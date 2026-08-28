@@ -17,6 +17,12 @@ import {
   NotFoundError,
   ValidationError,
 } from '../../shared/http/errors.ts';
+import {
+  buildAnalystSystemPrompt,
+  buildDesignerSystemPrompt,
+  buildQualitySystemPrompt,
+} from './graph/prompts.ts';
+import type { TestGenState } from './graph/state.ts';
 
 export class TestGenController {
   public readonly orchestrator: Orchestrator;
@@ -165,6 +171,14 @@ export class TestGenController {
     return pipelineRepo.getAuditLogs(runId, checkpointId);
   }
 
+  // 获取最近一次成功的运行日志
+  getLatestRunLogs(projectId: string) {
+    const runs = pipelineRepo.listRunsByProject(projectId);
+    const completedRun = runs.find((r: any) => r.status === 'COMPLETED');
+    if (!completedRun) return null;
+    return pipelineRepo.getAgentLogs(completedRun.id);
+  }
+
   // ---- Prompt Overrides ----
 
   getPromptOverrides(projectId: string) {
@@ -179,6 +193,63 @@ export class TestGenController {
   deletePromptOverride(projectId: string, agentName: string) {
     pipelineRepo.deletePromptOverride(projectId, agentName);
     return { success: true };
+  }
+
+  /** Get the default system prompt for an agent (without any custom override) */
+  getDefaultPrompt(agentName: string): string {
+    const minimalState = this.createMinimalState();
+    switch (agentName) {
+      case 'test_analyst':
+        return buildAnalystSystemPrompt(minimalState);
+      case 'test_designer':
+        return buildDesignerSystemPrompt(minimalState);
+      case 'quality_manager':
+        return buildQualitySystemPrompt(minimalState);
+      default:
+        return '';
+    }
+  }
+
+  /** Create a minimal TestGenState for generating default prompts */
+  private createMinimalState(): TestGenState {
+    return {
+      projectId: '',
+      runId: '',
+      mode: 'auto',
+      requirementIds: [],
+      epic: undefined,
+      currentBatch: [],
+      batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 },
+      projectContext: { name: '', pages: [], endpoints: [] },
+      businessFlowBlueprints: undefined,
+      htmlKnowledgeReference: undefined,
+      globalStats: { totalRequirements: 0, totalEpics: 0, totalFlows: 0 },
+      globalEpicIndex: undefined,
+      crossEpicDependencies: undefined,
+      previousBatchCoverageSummary: undefined,
+      relevantFlowBlueprints: undefined,
+      flowReferencedComponentContext: undefined,
+      environmentReady: true,
+      initializationLogs: [],
+      tokenBudget: { estimated: 0, limit: null },
+      requirementAnalysis: undefined,
+      testConditions: undefined,
+      approvedConditions: undefined,
+      draftTestCases: undefined,
+      approvedDraftCases: undefined,
+      finalTestCases: undefined,
+      coverageMatrix: undefined,
+      preservedCases: undefined,
+      allApprovedConditions: undefined,
+      generationMode: 'component',
+      selectedFlowIds: [],
+      analystInput: undefined,
+      humanReviewFeedback: '',
+      designerRetryCount: 0,
+      skillCalls: [],
+      phase: 'init',
+      errors: [],
+    } as TestGenState;
   }
 
   /** 恢复中断的运行（服务重启后调用） */

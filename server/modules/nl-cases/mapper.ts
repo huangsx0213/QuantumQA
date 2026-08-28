@@ -3,9 +3,16 @@ import { asId, asText, asArray } from '../../shared/utils/index.ts';
 
 function normalizeTestDataEntry(d: unknown): NlTestCaseTestData {
   if (typeof d === 'string') {
-    const sep = d.indexOf(':');
+    // LLM 生成格式：key = value (description) 或 key: value (description)
+    const sep = d.indexOf('=') >= 0 ? d.indexOf('=') : d.indexOf(':');
     if (sep > 0) {
-      return { key: d.slice(0, sep).trim(), value: d.slice(sep + 1).trim(), description: '' };
+      const key = d.slice(0, sep).trim();
+      const rest = d.slice(sep + 1).trim();
+      const parenMatch = rest.match(/^(.+?)\s*\(([^)]*)\)\s*$/);
+      if (parenMatch) {
+        return { key, value: parenMatch[1].trim(), description: parenMatch[2].trim() };
+      }
+      return { key, value: rest, description: '' };
     }
     return { key: d, value: '', description: '' };
   }
@@ -19,6 +26,8 @@ function normalizeStep(s: unknown): NlTestCaseStep {
     sequence: (obj.sequence as number) ?? (obj.stepNumber as number) ?? 0,
     action: asText(obj.action),
     expected: asText(obj.expected),
+    // 统一测试标准（docs/08）：结构化意图必须随 NL 用例落库。
+    ...(obj.intent && typeof obj.intent === 'object' ? { intent: obj.intent as NlTestCaseStep['intent'] } : {}),
   };
 }
 

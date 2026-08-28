@@ -27,6 +27,7 @@ import {
 import { ConfirmModal } from "@/shared/ui/ConfirmModal";
 import { HelpTooltip } from "@/shared/ui/HelpTooltip";
 import { AssertionEditor } from "./AssertionEditor";
+import { ReviewAssertionsPanel } from "./ReviewAssertionsPanel";
 import { AutosaveTextField } from "./AutosaveTextField";
 
 import { generateId } from "../utils";
@@ -2131,6 +2132,24 @@ export const StepList: React.FC<StepListProps> = ({
     assertions={step.assertions || []}
     onChange={(assertions) => {
       onUpdateStep(step.id, { assertions });
+    }}
+  />
+  <ReviewAssertionsPanel
+    items={(step.metadata as any)?.reviewAssertions || []}
+    onAccept={(assertion) => {
+      const review = ((step.metadata as any)?.reviewAssertions || [])
+        .filter((r: any) => r.assertion.id !== assertion.id);
+      onUpdateStep(step.id, {
+        assertions: [...(step.assertions || []), assertion],
+        metadata: { ...(step.metadata || {}), reviewAssertions: review },
+      } as any);
+    }}
+    onDismiss={(assertionId) => {
+      const review = ((step.metadata as any)?.reviewAssertions || [])
+        .filter((r: any) => r.assertion.id !== assertionId);
+      onUpdateStep(step.id, {
+        metadata: { ...(step.metadata || {}), reviewAssertions: review },
+      } as any);
     }}
   />
   {(step.assertions || []).length > 0 && (

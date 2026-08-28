@@ -258,6 +258,10 @@ export const api = {
       }),
     deletePromptOverride: (projectId: string, agentName: string) =>
       apiFetch<{ success: boolean }>(`test-gen/prompts/${projectId}/${agentName}`, { method: 'DELETE' }),
+    getDefaultPrompt: (projectId: string, agentName: string) =>
+      apiFetch<{ agentName: string; prompt: string }>(`test-gen/prompts/${projectId}/default/${agentName}`),
+    getLatestRunPrompts: (projectId: string) =>
+      apiFetch<any[]>(`test-gen/prompts/${projectId}/latest`),
   },
   nlCases: {
     ...createCrudService<any>('nl-cases'),

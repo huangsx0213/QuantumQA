@@ -210,7 +210,13 @@ export interface AiRecorderStartData {
   model?: string;
   /** 显式起始 URL 覆盖；提供时 Agent 跳过从用例解析 */
   startUrl?: string;
-  options: { headless?: boolean; maxRetriesPerStep?: number; timeoutPerStep?: number };
+  options: {
+    headless?: boolean;
+    maxRetriesPerStep?: number;
+    timeoutPerStep?: number;
+    /** 编译管线（docs/07）：规则+AI 编译断言；确认回放由 Server 端在会话结束后执行 */
+    enableCompilePipeline?: boolean;
+  };
   caseId: string;
   suiteId: string;
 }

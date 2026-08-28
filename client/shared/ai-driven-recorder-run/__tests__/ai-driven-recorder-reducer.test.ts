@@ -75,3 +75,18 @@ describe('recorderReducer step index alignment', () => {
     expect(final.steps[2].status).toBe('pending');
   });
 });
+describe('recorderReducer confirm phase', () => {
+  it('CONFIRM_START marks the phase running', () => {
+    let s = recorderReducer(createInitialState(), { type: 'START_REQUEST', nlCaseId: 'c1', providerConfigId: 'p1' });
+    s = recorderReducer(s, { type: 'CONFIRM_START', runId: 'r1' });
+    expect(s.confirmPhase).toEqual({ phase: 'running' });
+  });
+
+  it('CONFIRM_COMPLETE records the verdict summary', () => {
+    let s = recorderReducer(createInitialState(), { type: 'CONFIRM_COMPLETE', runId: 'r1', completedRuns: 2, confirmed: 2, review: 1, blockedByInfraFailure: false });
+    expect(s.confirmPhase).toEqual({ phase: 'done', completedRuns: 2, confirmed: 2, review: 1, blockedByInfraFailure: false });
+
+    s = recorderReducer(s, { type: 'CONFIRM_COMPLETE', runId: 'r1', completedRuns: 0, confirmed: 0, review: 3, blockedByInfraFailure: true });
+    expect(s.confirmPhase).toMatchObject({ phase: 'done', blockedByInfraFailure: true, review: 3 });
+  });
+});

@@ -37,6 +37,11 @@ export interface ReplayReport {
   }>;
 }
 
+/** 确认运行阶段（编译管线开启时，录制完成后无头回放验证 AI 断言） */
+export type ConfirmPhase =
+  | { phase: 'running' }
+  | { phase: 'done'; completedRuns: number; confirmed: number; review: number; blockedByInfraFailure: boolean };
+
 export interface RecorderRunState {
   runId: string | null;
   status: RunStatus;
@@ -49,6 +54,7 @@ export interface RecorderRunState {
   isConnected: boolean;
   nlCaseId: string | null;
   providerConfigId: string | null;
+  confirmPhase?: ConfirmPhase | null;
 }
 
 export type RecorderAction =
@@ -61,6 +67,8 @@ export type RecorderAction =
   | { type: 'STEP_COMPLETE'; runId: string; nlStepIndex: number; recordedStepCount?: number; durationMs?: number; verificationWarning?: string; logs?: Array<{ t: number; level: string; message: string }> }
   | { type: 'STEP_FAILED'; runId: string; nlStepIndex: number; error: string; retryCount?: number; logs?: Array<{ t: number; level: string; message: string }> }
   | { type: 'STEP_TAKEOVER'; runId: string; nlStepIndex: number; reason?: string }
+  | { type: 'CONFIRM_START'; runId: string }
+  | { type: 'CONFIRM_COMPLETE'; runId: string; completedRuns: number; confirmed: number; review: number; blockedByInfraFailure: boolean }
   | { type: 'RUN_COMPLETE'; runId: string; suiteId: string; caseId: string; replayReport?: ReplayReport }
   | { type: 'RUN_ERROR'; runId: string; error: string }
   | { type: 'RECORDER_FALLBACK'; runId: string; reason: string }
@@ -81,6 +89,8 @@ export interface StartConfig {
     headless?: boolean;
     maxRetriesPerStep?: number;
     timeoutPerStep?: number;
+    /** 编译管线（docs/07）：规则+AI 编译断言；确认回放由 Server 端在会话结束后执行 */
+    enableCompilePipeline?: boolean;
   };
 }
 

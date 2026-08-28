@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import type { NlStepIntent } from '../recording/nl-intent.ts';
+
+// 统一测试标准词表类型再导出（定义见 shared/recording/nl-intent.ts，docs/08）
+export type { NlStepIntent, ActionVerb, ExpectationKind } from '../recording/nl-intent.ts';
 
 export type ActionType = string;
 export type SelectorType = 'CSS' | 'XPATH' | 'TEXT' | 'ID' | 'TEST_ID' | string;
@@ -528,6 +532,11 @@ export interface NlTestCaseStep {
   sequence: number;
   action: string;
   expected: string;
+  /**
+   * 统一测试标准 · 步骤意图（docs/08）：结构化动作类型+期望分类。
+   * 可选——缺省时 Recorder 回退自由文本推断链路（存量兼容）。
+   */
+  intent?: NlStepIntent;
 }
 
 export interface NlTestCaseTestData {

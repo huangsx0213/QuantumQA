@@ -30,7 +30,7 @@ describe('Refiner pipeline', () => {
     });
     expect(result.steps.length).toBe(4); // s3 deduped
     expect(result.steps.find(s => s.target === 'Password')?.data).toBe('***');
-    expect(result.steps.find(s => s.target === 'Username')?.data).toBe('${username}');
+    expect(result.steps.find(s => s.target === 'Username')?.data).toBe('{{username}}');
     expect(result.provenance).toBeDefined();
     expect(result.provenance.source).toBe('ai-recorder');
   });
@@ -82,7 +82,7 @@ describe('parameterize', () => {
   it('replaces parameter values with template syntax', () => {
     const steps = [makeStep({ action: 'fill', target: 'Username', data: 'admin' })];
     const result = parameterize(steps, { username: 'admin' });
-    expect(result[0].data).toBe('${username}');
+    expect(result[0].data).toBe('{{username}}');
   });
 
   it('leaves non-parameter values unchanged', () => {
@@ -238,7 +238,7 @@ describe('applyAiAssertions', () => {
 
     const usernameStep = result.steps.find(s => s.target === 'Username')!;
     expect(usernameStep.assertions).toHaveLength(1);
-    expect(usernameStep.assertions![0].expectedValue).toBe('${username}'); // 参数化同步到断言
+    expect(usernameStep.assertions![0].expectedValue).toBe('{{username}}'); // 参数化同步到断言
     expect(usernameStep.assertions![0].message).toContain('field shows admin');
 
     const passwordStep = result.steps.find(s => s.target === 'Password')!;

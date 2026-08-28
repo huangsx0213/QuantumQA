@@ -112,6 +112,31 @@ export function RecorderRuntimePanel({
         </div>
       )}
 
+      {/* Confirmation phase banner（编译管线：录制完成后的无头回放验证） */}
+      {state.confirmPhase?.phase === 'running' && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-blue-50 border-b border-blue-200 text-xs text-blue-700">
+          <Loader2 size={14} className="shrink-0 animate-spin" />
+          <span>Confirming AI assertions — headless replay in progress (up to 2 runs)...</span>
+        </div>
+      )}
+      {state.confirmPhase?.phase === 'done' && (
+        <div
+          data-testid="confirm-summary"
+          className={`flex items-center gap-2 px-4 py-2 border-b text-xs ${
+            state.confirmPhase.blockedByInfraFailure
+              ? 'bg-amber-50 border-amber-200 text-amber-700'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
+          }`}
+        >
+          {state.confirmPhase.blockedByInfraFailure ? <AlertCircle size={14} className="shrink-0" /> : <CheckCircle2 size={14} className="shrink-0" />}
+          <span>
+            {state.confirmPhase.blockedByInfraFailure
+              ? `Confirmation replay hit an infrastructure failure — all AI proposals sent to review (${state.confirmPhase.review}).`
+              : `Assertions confirmed: ${state.confirmPhase.confirmed} · needs review: ${state.confirmPhase.review} (${state.confirmPhase.completedRuns} clean run${state.confirmPhase.completedRuns === 1 ? '' : 's'})`}
+          </span>
+        </div>
+      )}
+
       {/* Steps list */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {state.steps.length === 0 ? (
@@ -266,7 +291,7 @@ export function RecorderRuntimePanel({
                             >
                               {entry.level.toUpperCase()}
                             </span>
-                            <span className="text-slate-300 break-all">{entry.message}</span>
+                            <span className="text-slate-300 whitespace-pre-wrap break-all">{entry.message}</span>
                           </div>
                         ))}
                         {(step.logs?.length ?? 0) === 0 && (

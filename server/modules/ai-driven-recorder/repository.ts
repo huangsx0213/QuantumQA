@@ -104,6 +104,21 @@ export class AiDrivenRecorderRepository {
       | undefined;
   }
 
+  /**
+   * 列出"疑似中断"的活跃 run：仍在 running/refining/replaying 但已超过阈值时间未完成。
+   * 用于 server 重启后的 finalize 恢复（COMPLETE 事件在 WS 断线时丢失，见 recover.ts）。
+   */
+  listStaleActiveRuns(staleAfterMinutes: number): AiDrivenRecordingRunRow[] {
+    const rows = db
+      .prepare(
+        `SELECT * FROM ai_driven_recording_runs
+         WHERE status IN ('running', 'refining', 'replaying')
+           AND julianday('now') - julianday(started_at) > ?`,
+      )
+      .all(staleAfterMinutes / (24 * 60)) as AiDrivenRecordingRunRow[];
+    return rows;
+  }
+
   getRunsByProject(projectId: string): AiDrivenRecordingRunRow[] {
     return db
       .prepare('SELECT * FROM ai_driven_recording_runs WHERE project_id = ? ORDER BY started_at DESC')

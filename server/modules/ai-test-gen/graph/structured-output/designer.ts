@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { nlStepIntentSchema, validateStepContract, type NlStepIntent } from 'shared/recording/nl-intent.ts';
 import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
@@ -45,6 +46,9 @@ const DesignerRuntimeSchema = z.object({
     testData: z.array(coercedString),
     steps: z.array(z.object({
       stepNumber: z.number(),
+      // 统一测试标准（docs/08）：每步携带结构化意图（目标/数据/期望分类）。
+      // 动作类型不再存 intent——由 action 文本首词解析（validateStepContract 交叉校验）。
+      intent: nlStepIntentSchema.optional(),
       // F18-action: step atomicity for the `action` field. Compound `action`
       // patterns are rejected at the schema level — the LLM gets a clear
       // rejection message and self-corrects in Phase 2 retry.
@@ -98,15 +102,34 @@ const DesignerRuntimeSchema = z.object({
           });
         }
       }),
-    })).min(1),
+    })).min(1).superRefine((steps, ctx) => {
+      // docs/08：动作类型自 action 首词解析，与 intent 的 data/expectation 交叉校验（通用，不逐词写死）。
+      for (const step of steps) {
+        const issues = validateStepContract(
+          String(step.action ?? ''),
+          step.intent as NlStepIntent | undefined,
+        );
+        for (const issue of issues) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['steps'],
+            message: issue,
+          });
+        }
+      }
+    }),
     postconditions: z.array(z.string()).default([]),
     tags: z.array(z.string()).default([]),
+    // 自评字段兜底：多用例 JSON 输出截断时 selfReview 是 case 末尾最易被截断的字段。
+    // default() 覆盖整个对象缺失；catch() 覆盖对象存在但内部字段被截断（score 有、suggestions 无）。
+    // 丢失自评不影响用例本身（steps/expected/intent 才是机器契约），不应让单个 case 自评缺失报废整个批次。
     selfReview: z.object({
       score: z.number().min(1).max(10),
       strengths: z.array(z.string()),
       weaknesses: z.array(z.string()),
       suggestions: z.array(z.string()),
-    }),
+    }).default({ score: 7, strengths: [], weaknesses: [], suggestions: [] })
+      .catch({ score: 7, strengths: [], weaknesses: [], suggestions: [] }),
   })).min(1),
 });
 
@@ -390,6 +413,18 @@ export function createDesignerOutputProfile(
       '  WRONG: "Login page UI is functional (per C-001)" — vague behavior.',
       '  RIGHT: "Login page is loaded at /login with all form fields rendered" — concrete state.',
       '- Component behaviors the integration case assumes are declared via `referencedComponentConditions` ONLY — do NOT restate them in `preconditions`.',
+      'Step intent (structured) — carry on every step (data & expectation only; the action verb lives in the action text itself):',
+      '- `intent` fields: `targetHint`, `data`, `expectation { kind, value, expression, method, urlPattern }`.',
+      '  The action verb (navigate/fill/select/click/check/verify/waitFor/…) MUST be the FIRST word of `action` — picked from: navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog, waitFor, verify, extract.',
+      '  RESERVED (rejected): api, runModule.',
+      'Action verb role (NEVER mix): web operations = navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog (real DOM interaction). Verification = verify only (pure check, NO DOM operation). Wait = waitFor.',
+      '  If a state needs a user action (e.g. visiting a page by clicking a menu), write that action with the WEB verb; do NOT use verify to "perform" navigation. WRONG: "verify the page navigates to Reports". RIGHT: "click the Reports menu item" step, then "verify the URL contains /reports" step.',
+      '- `intent.expectation.kind` from: url, title, text-visible, element-visible, element-hidden, value, element-state, attribute, network, api-body.',
+      '  FORBIDDEN (rejected): transient (loading states / animations / focus — rewrite as an observable end state).',
+      '- `verify`/`waitFor` steps MUST carry `expectation`; `fill`/`select`/`navigate`/`upload`/`press` MUST set `intent.data`.',
+      '- `element-state` expectation.value ∈ enabled | disabled | checked | unchecked (REQUIRED — empty is rejected); `dialog` data ∈ accept | dismiss; `navigate` data = URL or app-relative path (e.g. "/login").',
+      '  WRONG: { "action": "click the button", "intent": { "expectation": { "kind": "transient", "value": "loading" } } }',
+      '  RIGHT: { "action": "click the Sign in button", "intent": { "expectation": { "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" } } }',
     ].join('\n'),
   };
 }

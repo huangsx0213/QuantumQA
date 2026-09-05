@@ -73,12 +73,14 @@ export function makeCheckpoint(checkpointNum: number) {
           });
         }
 
-        // Second pass or no issues: approve and proceed
+        // Second pass or no issues: approve and proceed.
+        // Clear the auto-gate feedback so it does not leak into the Designer's prompt.
         log.info(`AUTO mode ── auto-pass ✓ (${conditions.length} conditions)`);
         return new Command({
           goto: NEXT_AGENT[checkpointNum],
           update: {
             approvedConditions: conditions,
+            humanReviewFeedback: '',
             phase: 'design' as Phase,
           },
         });
@@ -99,6 +101,7 @@ export function makeCheckpoint(checkpointNum: number) {
             update: {
               approvedDraftCases: mergedCases,
               approvedConditions: allConditions,
+              humanReviewFeedback: '',
               phase: 'quality' as Phase,
             },
           });
@@ -107,6 +110,7 @@ export function makeCheckpoint(checkpointNum: number) {
           goto: NEXT_AGENT[checkpointNum],
           update: {
             approvedDraftCases: draftCases,
+            humanReviewFeedback: '',
             phase: 'quality' as Phase,
           },
         });

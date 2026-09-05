@@ -571,6 +571,10 @@ export interface NlTestCase {
   title: string;
   requirementId?: string;
   conditionId?: string;
+  // F10: Analyst condition ids this case covers (primary conditionId + any flow conditions).
+  coveredConditions?: string[];
+  // F11: for integration cases, the component conditions assumed as preconditions.
+  referencedComponentConditions?: string[];
   techniqueApplied?: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   category?: string;

@@ -1,5 +1,6 @@
 import { StateGraph, START, END, type BaseCheckpointSaver } from '@langchain/langgraph';
 import type { AIProvider } from '../infra/provider.ts';
+import { AGENT_NODE_TIMEOUT_MS } from './timing.ts';
 import { TestGenStateAnnotation, type TestGenState } from './state.ts';
 import { makePreparationNode } from './nodes/preparation.ts';
 import { makeAnalystNode } from './nodes/analyst.ts';
@@ -24,7 +25,7 @@ export interface BuildGraphOptions {
 }
 
 export function buildTestGenGraph(opts: BuildGraphOptions) {
-  const { observer, timeoutMs = 600_000, signal, checkpointer } = opts;
+  const { observer, timeoutMs = AGENT_NODE_TIMEOUT_MS, signal, checkpointer } = opts;
 
   const log = Log.for('graph');
   log.info('Building LangGraph state graph with 8 nodes...');

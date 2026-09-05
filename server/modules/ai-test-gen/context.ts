@@ -7,6 +7,7 @@ import { RunScope } from './scope.ts';
 import { TestGenSession } from './session.ts';
 import type { AgentObserver } from './graph/nodes/types.ts';
 import type { AIProvider } from './infra/provider.ts';
+import { AGENT_NODE_TIMEOUT_MS } from './graph/timing.ts';
 import { Log } from '../../shared/services/logger.ts';
 import {
   HtmlKnowledgeRepository,
@@ -306,7 +307,7 @@ export class ContextBuilder {
         observer,
         modelName,
         tokenLimit: providerConfigRow.monthly_token_limit ?? null,
-        timeoutMs: 600_000,
+        timeoutMs: AGENT_NODE_TIMEOUT_MS,
         useCache: config.useCache ?? false,
         signal: abortController.signal,
         htmlKnowledge,

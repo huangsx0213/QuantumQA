@@ -12,6 +12,7 @@ import type { EvidencePack, ActedElementEvidence } from '../ground.ts';
 export const GATE_SOURCES: readonly AssertionSource[] = [
   'UI_TEXT', 'UI_VALUE', 'UI_ATTRIBUTE', 'UI_PAGE_URL', 'UI_PAGE_TITLE',
   'UI_ELEMENT_VISIBLE', 'UI_ELEMENT_ENABLED', 'UI_ELEMENT_CHECKED', 'UI_ELEMENT_COUNT',
+  'API_BODY_JSON',
 ];
 export const GATE_OPERATORS: readonly AssertionOperator[] = [
   'EQUALS', 'CONTAINS', 'NOT_EQUALS', 'NOT_CONTAINS', 'EXISTS', 'MATCHES_REGEX',

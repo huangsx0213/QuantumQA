@@ -46,6 +46,42 @@ describe('role skill builders', () => {
     }
   });
 
+  it('knowledge skills return a short ack on repeat calls within one run (dedup ~22k chars)', async () => {
+    const skills = buildDesignerSkills('run-1', 'project-1');
+    const rules = skills.find((s) => s.name === 'designer_rules');
+    expect(rules).toBeDefined();
+
+    const first = await rules!.func({});
+    const second = await rules!.func({});
+    expect(String(first).length).toBeGreaterThan(1000);
+    expect(String(second).length).toBeLessThan(300);
+    expect(String(second)).toContain('already loaded');
+  });
+
+  it('knowledge skill cache is per-run (fresh instance per build — no cross-run leak)', async () => {
+    const runA = buildDesignerSkills('run-a', 'project-1').find((s) => s.name === 'designer_rules')!;
+    const runB = buildDesignerSkills('run-b', 'project-1').find((s) => s.name === 'designer_rules')!;
+
+    const a1 = await runA.func({});
+    const a2 = await runA.func({});
+    // run B gets a fresh instance → full body again, NOT the ack from run A
+    const b1 = await runB.func({});
+    expect(String(a1).length).toBeGreaterThan(1000);
+    expect(String(a2).length).toBeLessThan(300);
+    expect(String(b1).length).toBeGreaterThan(1000);
+  });
+
+  it('istqb_guide returns a short ack on repeat requests of the same techniques (dedup ~33k chars)', async () => {
+    const skills = buildAnalystSkills('run-1', 'project-1');
+    const guide = skills.find((s) => s.name === 'istqb_guide')!;
+
+    const first = await guide.func({ techniques: ['Equivalence Partitioning', 'Boundary Value Analysis'] });
+    const second = await guide.func({ techniques: ['Equivalence Partitioning', 'Boundary Value Analysis'] });
+    expect(String(first).length).toBeGreaterThan(1000);
+    expect(String(second).length).toBeLessThan(300);
+    expect(String(second)).toContain('already loaded');
+  });
+
   it('appends html_knowledge_query for every role when a validated runtime is present', () => {
     const snapshot: HtmlRequirementSnapshot = {
       version: 1,

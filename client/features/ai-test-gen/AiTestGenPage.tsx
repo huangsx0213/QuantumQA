@@ -49,6 +49,7 @@ export function AiTestGenPage({ currentProjectId }: AiTestGenPageProps) {
   const currentProjectIdRef = useRef(currentProjectId);
   currentProjectIdRef.current = currentProjectId;
   const [reviewMode, setReviewMode] = useState(false);
+  const [reviewActionMsg, setReviewActionMsg] = useState<string | null>(null);
 
   const { data: requirements = [] } = useRequirements(currentProjectId || '');
   const flowStories = useMemo(() => requirements.filter(r => r.isFlow), [requirements]);
@@ -234,27 +235,34 @@ const handleRefresh = useCallback(async () => {
   }, [pipeline, queryClient, currentProjectId]);
 
   const handleToggleReview = useCallback(() => {
+    setReviewActionMsg(null);
     setReviewMode(prev => !prev);
   }, []);
 
   const handleDoneReviewing = useCallback(async () => {
-    if (pipeline.selectedNode?.kind === 'checkpoint' && checkpointEditedData.current && pipeline.runId) {
-      const { api } = await import('@/shared/services/api');
-      const nodeId = pipeline.selectedNode.id;
-      const cpMap: Record<string, number> = {
-        checkpoint_1: 1, checkpoint_2: 2, checkpoint_3: 3,
-      };
-      const cpNum = cpMap[nodeId];
-      if (cpNum) {
-        await api.testGen.saveCheckpointEdits(
-          pipeline.runId,
-          checkpointEditedData.current,
-          cpNum,
-        );
+    const node = pipeline.selectedNode;
+    const cpMap: Record<string, number> = {
+      checkpoint_1: 1, checkpoint_2: 2, checkpoint_3: 3,
+    };
+    const cpNum = node?.kind === 'checkpoint' ? cpMap[node.id] : undefined;
+    // 只有 checkpoint 正处于人工审核停等（run.status === WAITING_REVIEW）时才允许保存编辑；
+    // auto-passed / completed 等非审核态没有可保存的审核会话，服务端会拒绝。
+    const isAwaitingReview = node?.status === 'waiting';
+    try {
+      if (node?.kind === 'checkpoint' && cpNum && isAwaitingReview && checkpointEditedData.current && pipeline.runId) {
+        const { api } = await import('@/shared/services/api');
+        await api.testGen.saveCheckpointEdits(pipeline.runId, checkpointEditedData.current, cpNum);
         await pipeline.refreshCheckpointData();
+        setReviewActionMsg('Edits saved');
+      } else if (node?.kind === 'checkpoint' && cpNum && !isAwaitingReview) {
+        setReviewActionMsg('This checkpoint is already passed/resolved — edits can only be saved while it waits for review.');
       }
+    } catch (err: any) {
+      setReviewActionMsg(`Failed to save edits: ${err?.message || 'unknown error'}`);
+    } finally {
+      // 无论如何退出 review 模式，避免按钮无响应
+      setReviewMode(false);
     }
-    setReviewMode(false);
   }, [pipeline]);
 
   const handleCheckpointDataChange = useCallback((data: any) => {
@@ -412,6 +420,7 @@ const handleRefresh = useCallback(async () => {
                 onToggleReview={handleToggleReview}
                 onDoneReviewing={handleDoneReviewing}
                 onCheckpointDataChange={handleCheckpointDataChange}
+                reviewMessage={reviewActionMsg}
                 isEditing={reviewMode}
                 retrying={retrying}
               />

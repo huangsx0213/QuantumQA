@@ -13,6 +13,7 @@ import {
   makePreviousBatchCasesQuery,
   type RequirementSkillRepository,
 } from './data-skills.ts';
+import { declareCaseSkill, declareStepSkill } from './declare-step-skill.ts';
 import { Log } from '../../../../shared/services/logger.ts';
 import {
   makeHtmlKnowledgeQuery,
@@ -72,6 +73,11 @@ function createKnowledgeSkill(mdFilePath: string): SkillDefinition {
     return `Load the "${label}" knowledge guide. Use when you need detailed methodology, steps, examples, or common mistakes for this technique or domain topic.`;
   })();
 
+  // 每 run 单次加载缓存：知识文件是静态内容，且 prompt 强制 LLM 调用（MANDATORY）。
+  // 实测 LLM 在同一次 ReAct 中会重复调用（designer_rules 曾加载 2 次 = 45k chars，
+  // 白白进上下文）。第二次起返回简短 ack，引用首次加载的内容即可。
+  let loadedOnce = false;
+
   return {
     name: skillName,
     description,
@@ -82,6 +88,11 @@ function createKnowledgeSkill(mdFilePath: string): SkillDefinition {
         .describe('Brief context of what you are testing, to get tailored guidance'),
     }),
     func: async ({ context }) => {
+      if (loadedOnce) {
+        Log.for(`skill:${skillName}`).info(`already loaded this run — ack (saved ${body.length} chars)`);
+        return `(${skillName} already loaded above — the full rules are in your context. Do not reload; continue.)`;
+      }
+      loadedOnce = true;
       Log.for(`skill:${skillName}`).info(`Loaded (${body.length} chars)${context ? `, context: ${String(context).slice(0, 60)}` : ''}`);
       return context ? `${body}\n\n---\nApplying to your context: ${context}` : body;
     },
@@ -91,12 +102,20 @@ function createKnowledgeSkill(mdFilePath: string): SkillDefinition {
 /**
  * Scan the knowledge directory and auto-register all .md files as Knowledge Skills.
  * Excludes individual ISTQB technique guides (already merged into the unified istqb_guide).
+ *
+ * 返回工厂（而非共享实例）：knowledge skill 内含"每 run 单次加载"缓存闭包。
+ * 若在模块级共享实例，缓存会跨 run 泄漏（run A 加载过 → run B 误以为已加载，
+ * 而 run B 上下文中其实没有内容）。每次 build*Skills 调用 create() 得到新实例。
  */
-function loadKnowledgeSkills(): SkillDefinition[] {
+function loadKnowledgeSkills(): Array<{ name: string; create: () => SkillDefinition }> {
   const knowledgeDir = join(__dirname, 'knowledge');
   try {
     const files = readdirSync(knowledgeDir).filter((f) => f.endsWith('.md') && !f.startsWith('istqb-'));
-    return files.map((f) => createKnowledgeSkill(join(knowledgeDir, f)));
+    return files.map((f) => {
+      const path = join(knowledgeDir, f);
+      const name = createKnowledgeSkill(path).name;
+      return { name, create: () => createKnowledgeSkill(path) };
+    });
   } catch (err: any) {
     Log.for('skills').warn(`Knowledge directory not found or empty (${knowledgeDir}): ${err.message}`);
     return [];
@@ -144,14 +163,20 @@ for (const f of ISTQB_GUIDE_FILES) {
   _istqbGuideBodies[f] = parseFrontmatter(readFileSync(join(_istqbKnowledgeDir, f), 'utf-8')).body;
 }
 
-const istqbGuideSkill: SkillDefinition = {
+// 每 run 已加载的 istqb_guide 请求集（按 techniques 规范化键），避免 LLM 重复
+// 请求同一批指南时全量重发（实测单 run 重复加载，Analyst 一次拉全 6 本 33k chars）。
+// 注意：缓存放工厂函数闭包内，每次 buildSkills 新建实例 —— 避免跨 run 泄漏
+//（run A 加载过 ≠ run B 上下文里已有内容）。
+function createIstqbGuideSkill(): SkillDefinition {
+  const loadedGuideSets = new Set<string>();
+  return {
   name: 'istqb_guide',
-  description: 'Load ALL ISTQB technique guides combined (Equivalence Partitioning, Boundary Value Analysis, Decision Table, State Transition, Use Case Testing) PLUS the Integration Testing test-level guide (component vs integration test level decision). Use when you need methodology, steps, examples, or common mistakes for any test design technique or test level.',
+  description: 'Load ISTQB technique guide(s). Pass the SPECIFIC techniques/test levels you need (e.g. ["Equivalence Partitioning"]) — each run, load ONLY the 1-2 techniques your conditions actually use; loading all 6 wastes context. Use when you need methodology, steps, examples, or common mistakes for a test design technique or test level.',
   schema: z.object({
     techniques: z
       .array(z.string())
       .optional()
-      .describe('Specific techniques or test levels to focus on (omit to load all)'),
+      .describe('Specific techniques or test levels to focus on (omit to load the compact overview only)'),
     context: z
       .string()
       .optional()
@@ -161,6 +186,21 @@ const istqbGuideSkill: SkillDefinition = {
     const requestedTechniqueAliases = Array.isArray(techniques)
       ? techniques.flatMap((technique) => buildTechniqueAliases(String(technique)))
       : [];
+
+    // 每 run 按 techniques 集缓存：LLM 常在同一次 ReAct 中重复调用 istqb_guide
+    //（实测 designer 2 次、analyst 曾一次加载 6/6 指南 33k chars）。相同请求集
+    // 第二次起返回 ack，避免同样的指南重复进上下文。
+    const cacheKey = requestedTechniqueAliases.length > 0
+      ? [...requestedTechniqueAliases].sort().join('|')
+      : '__overview__';
+    if (loadedGuideSets.has(cacheKey)) {
+      const ack = requestedTechniqueAliases.length > 0
+        ? '(ISTQB guides for these techniques already loaded above — refer to them; do not reload.)'
+        : '(ISTQB overview already loaded above — refer to it; do not reload.)';
+      Log.for('skill:istqb_guide').info(`already loaded "${cacheKey}" this run — ack`);
+      return ack;
+    }
+    loadedGuideSets.add(cacheKey);
 
     // P1: When no techniques specified, return only the compact overview
     // (decision table + selection rules). The LLM should call again with
@@ -178,14 +218,25 @@ const istqbGuideSkill: SkillDefinition = {
       const fileAliases = buildTechniqueAliases(fileTechniqueName);
       return requestedTechniqueAliases.some((requested) => fileAliases.includes(requested));
     });
-    const parts = selectedFiles.map((f) => _istqbGuideBodies[f]);
+
+    // 单次最多返回 3 本指南（实测 LLM 常一次请求 6/6 → 33.6k chars 全进上下文，
+    // 占 token 大头）。超出时只返回前 3 本，并提示按需再请求——本 batch 若确实
+    // 覆盖多种技术，LLM 可针对剩余技术单独调用（缓存保证不重复加载前 3 本）。
+    const MAX_GUIDES_PER_CALL = 3;
+    const served = selectedFiles.slice(0, MAX_GUIDES_PER_CALL);
+    const dropped = selectedFiles.slice(MAX_GUIDES_PER_CALL);
+    const parts = served.map((f) => _istqbGuideBodies[f]);
     const combined = parts.join('\n\n---\n\n');
-    Log.for('skill:istqb_guide').info(`Loaded ${selectedFiles.length}/${ISTQB_GUIDE_FILES.length} guides (${combined.length} chars)`);
+    const loadNote = dropped.length > 0
+      ? `\n\n(Loaded ${served.length}/${selectedFiles.length} requested guides — this call caps at ${MAX_GUIDES_PER_CALL}. If you still need ${dropped.map((f) => f.replace(/^istqb-/, '').replace(/\.md$/, '').replace(/-/g, ' ')).join(', ')}, call istqb_guide again with just that technique.)`
+      : '';
+    Log.for('skill:istqb_guide').info(`Loaded ${served.length}/${selectedFiles.length} guides (${combined.length} chars)${dropped.length > 0 ? `, capped ${dropped.length}` : ''}`);
     return context
-      ? `${combined}\n\n---\nApplying to your context: ${context}`
-      : combined;
+      ? `${combined}${loadNote}\n\n---\nApplying to your context: ${context}`
+      : `${combined}${loadNote}`;
   },
-};
+  };
+}
 
 // ============================================================
 // Skill Groups
@@ -214,8 +265,8 @@ export function buildAnalystSkills(
     makeFlowDetailQuery(projectId, requirementRepository, cacheScope),
     makeCrossEpicImpactQuery(projectId, requirementRepository),
     makePreviousBatchConditionsQuery(runId, projectId, undefined, requirementRepository),
-    istqbGuideSkill,
-    ...knowledgeSkills.filter((s) => s.name === 'analyst_rules'),
+    createIstqbGuideSkill(),
+    ...knowledgeSkills.filter((s) => s.name === 'analyst_rules').map((s) => s.create()),
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({
@@ -245,8 +296,12 @@ export function buildDesignerSkills(
     makeRequirementGraphQuery(projectId, requirementRepository),
     makeFlowDetailQuery(projectId, requirementRepository, cacheScope),
     makePreviousBatchCasesQuery(runId, projectId, undefined, requirementRepository),
-    istqbGuideSkill,
-    ...knowledgeSkills.filter((s) => s.name === 'designer_rules'),
+    createIstqbGuideSkill(),
+    ...knowledgeSkills.filter((s) => s.name === 'designer_rules').map((s) => s.create()),
+    // Tool Use 强制结构化：verb 在 API 层 enum 强制，data/expectation 按 verb 配对强制。
+    // LLM 写 step 必须通过 declare_step，无法写出非词表 verb。
+    declareCaseSkill,
+    declareStepSkill,
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({
@@ -275,8 +330,8 @@ export function buildQualitySkills(
     makeRequirementDetailQuery(projectId, batchRequirements, requirementRepository, cacheScope),
     makeFlowDetailQuery(projectId, requirementRepository, cacheScope),
     makePreviousBatchCasesQuery(runId, projectId, undefined, requirementRepository),
-    istqbGuideSkill,
-    ...knowledgeSkills.filter((s) => s.name === 'quality_rules'),
+    createIstqbGuideSkill(),
+    ...knowledgeSkills.filter((s) => s.name === 'quality_rules').map((s) => s.create()),
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({

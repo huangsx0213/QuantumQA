@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   X,
   Brain,
@@ -67,6 +67,7 @@ interface NodeDetailProps {
   onToggleReview?: () => void;
   onDoneReviewing?: () => void;
   onCheckpointDataChange?: (data: any) => void;
+  reviewMessage?: string | null;
   isEditing?: boolean;
   retrying?: boolean;
 }
@@ -1125,27 +1126,34 @@ function ThinkingBlock({ text, isRunning, startTime, endTime: endTimeProp }: { t
   const [userToggled, setUserToggled] = useState(false);
   const isCollapsed = userToggled ? collapsed : (!isRunning && lineCount > 20);
 
-  // Capture end time once when streaming stops (only if not provided externally)
+  // Capture end time once when streaming stops (only if not provided externally).
+  // CRITICAL: never fall back to Date.now() for historically-loaded entries —
+  // a run may have finished long ago, and treating "now" as the end makes the
+  // duration balloon to thousands of minutes. Only capture "now" during the
+  // live isRunning→false transition; historical entries stay at startTime.
   const [capturedEndTime, setCapturedEndTime] = useState<number | null>(null);
+  const wasRunningRef = useRef(false);
   useEffect(() => {
     if (isRunning) {
+      wasRunningRef.current = true;
       setCapturedEndTime(null);
-    } else if (!endTimeProp && !capturedEndTime) {
+    } else if (wasRunningRef.current && !endTimeProp && !capturedEndTime) {
       setCapturedEndTime(Date.now());
+      wasRunningRef.current = false;
     }
   }, [isRunning, endTimeProp]);
 
   // Compute duration label like ChatGPT's "Thought for 12s"
   const durationLabel = useMemo(() => {
     if (!startTime) return null;
-    const end = endTimeProp ?? capturedEndTime ?? Date.now();
+    const end = endTimeProp ?? capturedEndTime ?? (isRunning ? Date.now() : startTime);
     const elapsed = Math.round((end - startTime) / 1000);
     if (elapsed < 1) return '<1s';
     if (elapsed < 60) return `${elapsed}s`;
     const m = Math.floor(elapsed / 60);
     const s = elapsed % 60;
     return `${m}m ${s}s`;
-  }, [startTime, endTimeProp, capturedEndTime, text]);
+  }, [startTime, endTimeProp, capturedEndTime, isRunning, text]);
 
   const logBlocks = useMemo(() => buildReasoningLogBlocks(text), [text]);
 
@@ -1710,7 +1718,7 @@ function AgentDetailTabs({ agentLog, node, thinkingText, agentLogs }: { agentLog
                                     </div>
                                   )}
                                   {g.type === 'reasoning' ? (
-                                    <ThinkingBlock key={`r-${i}`} text={g.text} isRunning={isRunning && i === entries.length - 1} startTime={g.timestamp} />
+                                    <ThinkingBlock key={`r-${i}`} text={g.text} isRunning={isRunning && i === entries.length - 1} startTime={g.timestamp} endTime={entries[i + 1]?.timestamp} />
                                   ) : (
                                     <OutputBlock key={`o-${i}`} text={g.text} isRunning={isRunning && i === entries.length - 1} />
                                   )}
@@ -1745,7 +1753,7 @@ function AgentDetailTabs({ agentLog, node, thinkingText, agentLogs }: { agentLog
                                 </div>
                               )}
                               {g.type === 'reasoning' ? (
-                                <ThinkingBlock key={`r-${i}`} text={g.text} isRunning={isRunning && i === filteredThinkingText.length - 1} startTime={g.timestamp} />
+                                <ThinkingBlock key={`r-${i}`} text={g.text} isRunning={isRunning && i === filteredThinkingText.length - 1} startTime={g.timestamp} endTime={filteredThinkingText[i + 1]?.timestamp} />
                               ) : (
                                 <OutputBlock key={`o-${i}`} text={g.text} isRunning={isRunning && i === filteredThinkingText.length - 1} />
                               )}
@@ -3106,6 +3114,7 @@ export function TestGenDetailPanel({
   onToggleReview,
   onDoneReviewing,
   onCheckpointDataChange,
+  reviewMessage,
   isEditing,
   retrying
 }: NodeDetailProps) {
@@ -3229,6 +3238,11 @@ export function TestGenDetailPanel({
                   Review
                 </button>
               )
+            )}
+            {reviewMessage && (
+              <span className="text-[11px] px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-700 max-w-[240px] truncate">
+                {reviewMessage}
+              </span>
             )}
           </div>
         )}

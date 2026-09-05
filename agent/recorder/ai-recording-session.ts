@@ -200,6 +200,53 @@ function ruleBasedAssertion(payloads: RecorderStepPayload[]): AiAssertionProposa
   return null;
 }
 
+/** 页面级断言 source 集合——不需要元素依托，verify 步骤可直接使用 */
+const PAGE_LEVEL_SOURCES = new Set(['UI_PAGE_URL', 'UI_PAGE_TITLE', 'UI_TEXT']);
+
+/**
+ * 从 NlStepIntent 的结构化期望确定性推导断言提议（零 LLM）。
+ * 旧路径（compilePipeline=false）下 verify/waitFor 步骤的唯一断言来源。
+ * - 页面级期望（url/title/text-visible）：直接生成，无需元素依托
+ * - api-body：生成 API_BODY_JSON（需配合 waitForNetwork 捕获响应体）
+ * - element-visible/value/attribute/element-state：需要元素依托，旧路径无法提供，跳过
+ * - network：不生成 StepAssertion，由 mounting 块的 waitForNetwork 配置处理
+ * - transient：生成期即拒绝
+ */
+function intentBasedAssertion(
+  intent: NlStepIntent | undefined,
+  expected: string,
+): AiAssertionProposal | null {
+  if (!intent?.expectation) return null;
+  const { kind, value, expression } = intent.expectation;
+  if (!kind || kind === 'transient' || kind === 'network') return null;
+
+  if (kind === 'api-body') {
+    return {
+      source: 'API_BODY_JSON',
+      operator: 'CONTAINS',
+      expectedValue: value,
+      expression,
+      origin: 'rule',
+      confidence: 1,
+      expectedText: expected,
+    };
+  }
+
+  const mapping = getExpectationMapping(kind);
+  if (mapping.sources.length === 0) return null;
+  const source = mapping.sources[0];
+  if (!PAGE_LEVEL_SOURCES.has(source)) return null;
+
+  return {
+    source,
+    operator: 'CONTAINS',
+    expectedValue: value,
+    origin: 'rule',
+    confidence: 1,
+    expectedText: expected,
+  };
+}
+
 export type NlStepKind = 'field' | 'navigation' | 'button' | 'generic';
 
 /**
@@ -376,6 +423,8 @@ export class AIRecordingSession {
     responseBody?: string;
     capturedAt: number;
   }> = [];
+  /** consolidated payload 回调（与 start() 的 onConsolidatedStep 同一实例），verify 生成的 assert 步骤也走此桥 */
+  private onConsolidatedStep?: (step: RecorderStepPayload) => void;
 
   async start(params: AIRecordingSessionParams): Promise<RecordingResult> {
     const { nlCase, providerConfig, options, onConsolidatedStep, onEvent } = params;
@@ -389,6 +438,7 @@ export class AIRecordingSession {
     this.rawPayloadsByNlStep.clear();
     this.evidenceByNlStep.clear();
     this.currentNlStepIndex = -1;
+    this.onConsolidatedStep = onConsolidatedStep;
     this.testDataParams = Object.fromEntries(
       (nlCase.testData ?? []).map((td) => [td.key, td.value]),
     );
@@ -411,7 +461,6 @@ export class AIRecordingSession {
     let cdpBrowser: Browser | null = null;
     let cdpContext: BrowserContext | null = null;
     try {
-      const { chromium } = await import('playwright');
       executablePath = chromium.executablePath();
     } catch {
       // Fallback: let chrome-launcher find it
@@ -419,16 +468,16 @@ export class AIRecordingSession {
 
     const DEBUG_PORT = 19222;
     try {
-    browser = await (await import('playwright')).chromium.launch({
-      headless: this.isHeadless,
-      args: [
-        ...(this.isHeadless ? [] : ['--start-maximized']),
-        `--remote-debugging-port=${DEBUG_PORT}`,
-      ],
-      ...(executablePath ? { executablePath } : {}),
-    });
-    const browserContext = await browser.newContext({ viewport: null });
-    const page: Page = await browserContext.newPage();
+      browser = await chromium.launch({
+        headless: this.isHeadless,
+        args: [
+          ...(this.isHeadless ? [] : ['--start-maximized']),
+          `--remote-debugging-port=${DEBUG_PORT}`,
+        ],
+        ...(executablePath ? { executablePath } : {}),
+      });
+      const browserContext = await browser.newContext({ viewport: null });
+      const page: Page = await browserContext.newPage();
 
     // 2. 解析起始 URL（校验提前：非法 URL 启动即抛错）
     throwIfAborted(params.signal);
@@ -718,7 +767,7 @@ export class AIRecordingSession {
     });
 
     // --- 阶段 0: 动作类型自 action 文本首词解析 + intent 分派（docs/08 §3.2） ---
-    const intent = (nlStep as any).intent as NlStepIntent | undefined;
+    const intent = nlStep.intent;
     const verb = parseActionVerb(nlStep.action);
     if (intent) {
       log('info', `intent: action=${verb ?? '?'}${intent.expectation ? ` expectation.kind=${intent.expectation.kind}` : ''}`);
@@ -814,7 +863,7 @@ export class AIRecordingSession {
           }
         }
 
-          if (attempt >= maxRetries) {
+        if (attempt >= maxRetries) {
           let failedUrl = 'unknown';
           try { failedUrl = await page.url(); } catch { /* ignore */ }
           console.error(`[ACT|step:${nlStepIndex}] FAILED url=${failedUrl} msg=${err.message}`);
@@ -1103,6 +1152,26 @@ export class AIRecordingSession {
       });
       this.evidenceByNlStep.set(nlStepIndex, evidence);
       await this.compileAssertions(nlStepIndex, nlStep, evidence, page, log);
+    } else if (nlStep.expected && parseActionVerb(nlStep.action) === 'verify') {
+      // 旧路径：verify 步骤不产生 DOM 操作——直接生成独立 assert 步骤（Form B），
+      // 使"纯验证步骤落盘即消失"问题彻底解决。元素依托断言由 intent.targetHint
+      // 经 Stagehand observe 解析出选择器；页面级断言（url/title）无需元素。
+      const created = await this.buildVerifyAssertStep(nlStepIndex, nlStep, page, log);
+      if (!created) {
+        // 生成失败（缺 targetHint / 选择器解析失败 / 非元素类）→ 回退页面级 intent 挂载
+        const proposal = intentBasedAssertion(nlStep.intent, nlStep.expected);
+        if (proposal) {
+          this.pendingAssertions.set(nlStepIndex, proposal);
+          log('info', `intent assertion (${proposal.origin}): ${proposal.source} ${proposal.operator} "${proposal.expectedValue ?? ''}"`);
+        }
+      }
+    } else if (nlStep.expected) {
+      // 旧路径：navigate/waitFor 步骤从 intent 确定性推导断言（零 LLM）
+      const proposal = intentBasedAssertion(nlStep.intent, nlStep.expected);
+      if (proposal) {
+        this.pendingAssertions.set(nlStepIndex, proposal);
+        log('info', `intent assertion (${proposal.origin}): ${proposal.source} ${proposal.operator} "${proposal.expectedValue ?? ''}"`);
+      }
     }
 
     emit('step:complete', {
@@ -1114,6 +1183,122 @@ export class AIRecordingSession {
       logs: [...stepLogs, ...this.apiLogEntries(nlStepIndex, stepStartedAt)],
     });
     return { nlStepIndex, startStepIdx, endStepIdx: this.recordedSteps.length };
+  }
+
+  /**
+   * 期望分类 → assert 动作映射（docs/08 断言承载模型）。
+   * requiresElement=true 时需解析 targetHint 为选择器；dataValue 是 assert 步骤的 data。
+   * network / api-body / transient 返回 null——网络断言走 waitForNetwork，响应体断言走 intent 挂载。
+   */
+  private expectationKindToAssertAction(
+    kind: string,
+    expectation: { value?: string; expression?: string } | undefined,
+  ): { action: string; requiresElement: boolean; dataValue?: string } | null {
+    switch (kind) {
+      case 'element-visible':
+        return { action: 'assertVisible', requiresElement: true };
+      case 'element-hidden':
+        return { action: 'assertInvisible', requiresElement: true };
+      case 'value':
+        return { action: 'assertValue', requiresElement: true, dataValue: expectation?.value };
+      case 'text-visible':
+        return { action: 'assertText', requiresElement: true, dataValue: expectation?.value };
+      case 'attribute':
+        return expectation?.expression && expectation?.value !== undefined
+          ? { action: 'assertAttribute', requiresElement: true, dataValue: `${expectation.expression}=${expectation.value}` }
+          : null;
+      case 'element-state': {
+        const v = expectation?.value;
+        if (v === 'enabled') return { action: 'assertEnabled', requiresElement: true };
+        if (v === 'disabled') return { action: 'assertDisabled', requiresElement: true };
+        if (v === 'checked') return { action: 'assertChecked', requiresElement: true };
+        if (v === 'unchecked') return { action: 'assertUnchecked', requiresElement: true };
+        return null;
+      }
+      case 'url':
+        return { action: 'assertUrl', requiresElement: false, dataValue: expectation?.value };
+      case 'title':
+        return { action: 'assertTitle', requiresElement: false, dataValue: expectation?.value };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * 用 Stagehand observe 把 intent.targetHint（自然语言）解析为稳定选择器。
+   * 解析失败返回 null（调用方回退页面级挂载或跳过）。
+   */
+  private async resolveTargetSelector(targetHint: string, page: Page): Promise<string | null> {
+    try {
+      const observations = await this.withStepTimeout(
+        'observe',
+        this.stagehand!.observe(
+          `Find the element on the current page described as: "${targetHint}". ` +
+            `Return the most specific stable selector for it (prefer data-testid, id, or accessible role).`,
+          { page },
+        ),
+      );
+      const el = Array.isArray(observations) ? observations[0] : null;
+      const selector = el?.selector;
+      return typeof selector === 'string' && selector ? selector : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 旧路径下 verify 步骤生成独立 assert 步骤（Form B）：
+   * 元素依托断言 → 解析 targetHint 得选择器，创建 assertVisible/assertValue/... payload；
+   * 页面级断言（url/title）→ 创建 assertUrl/assertTitle payload（无需元素）。
+   * payload 进入 recordedSteps 与 onConsolidatedStep 桥，落库后由 saveSuite 的
+   * normalizeAssertSteps 转成显式 StepAssertion（稳定 ID + provenance=rule）。
+   * 返回 null 表示无法生成（调用方回退页面级 intent 挂载）。
+   */
+  private async buildVerifyAssertStep(
+    nlStepIndex: number,
+    nlStep: NlTestCaseStep,
+    page: Page,
+    log: (level: 'info' | 'warn' | 'error', message: string) => void,
+  ): Promise<RecorderStepPayload | null> {
+    const expectation = nlStep.intent?.expectation;
+    if (!expectation) return null;
+    const mapping = this.expectationKindToAssertAction(expectation.kind, expectation);
+    if (!mapping) return null;
+
+    let locator: LocatorRef | undefined;
+    if (mapping.requiresElement) {
+      if (!nlStep.intent?.targetHint) {
+        log('warn', `verify: element-bound expectation missing targetHint — no assert step created`);
+        return null;
+      }
+      const selector = await this.resolveTargetSelector(nlStep.intent.targetHint, page);
+      if (!selector) {
+        log('warn', `verify: could not resolve selector for "${nlStep.intent.targetHint}" — no assert step created`);
+        return null;
+      }
+      locator = { kind: 'css', selector };
+    }
+
+    const payload: RecorderStepPayload = {
+      action: mapping.action,
+      locator,
+      locatorCandidates: [],
+      pageUrl: page.url(),
+      timestamp: Date.now(),
+      ...(mapping.dataValue !== undefined ? { value: mapping.dataValue } : {}),
+      metadata: {
+        nlStepIndex,
+        verifySource: nlStep.action,
+        verifyExpected: nlStep.expected,
+      },
+    };
+    this.recordedSteps.push(payload);
+    if (this.onConsolidatedStep) this.onConsolidatedStep(payload);
+    log(
+      'info',
+      `assert step created: ${mapping.action}${locator ? ` ${locator.selector}` : ''}${mapping.dataValue !== undefined ? ` data="${mapping.dataValue}"` : ''}`,
+    );
+    return payload;
   }
 
   /**
@@ -1151,12 +1336,14 @@ export class AIRecordingSession {
     // 0. intent 驱动（docs/08 §3.2）：有结构化期望分类时按映射表定 source，零 LLM
     // 但 API/URL 相关期望必须由该边界**真实的网络捕获**（capturedApis）背书——
     // AI 的 urlPattern / URL 期望只作候选，不匹配真实捕获就丢弃，不硬猜。
-    const intent = (nlStep as any).intent as NlStepIntent | undefined;
+    const intent = nlStep.intent;
     const intentKind = intent?.expectation?.kind;
 
-    // 网络相关期望（network / api-body / url 里可能影响跳转）先查真实捕获
+    // 网络相关期望（network / api-body）必须由真实捕获背书——
+    // AI 的 urlPattern 只作候选，不匹配真实捕获就丢弃，不硬猜。
+    // url 期望是页面 URL 变更，不是网络调用，不走此校验。
     const boundaryApis = effEvidence.networkCalls ?? [];
-    if (intentKind === 'network' || intentKind === 'api-body' || intentKind === 'url') {
+    if (intentKind === 'network' || intentKind === 'api-body') {
       const want = intent?.expectation?.urlPattern ?? intent?.expectation?.value ?? '';
       const wantMethod = intent?.expectation?.method ?? '';
       const matched = boundaryApis.some(a =>

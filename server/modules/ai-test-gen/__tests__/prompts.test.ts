@@ -8,6 +8,12 @@ import {
   buildQualityUserMessage,
 } from '../graph/prompts.ts';
 import { computePromptVersion } from '../infra/prompt-version.ts';
+import {
+  ACTION_WEB_VERBS,
+  ASSERTABLE_EXPECTATION_KINDS,
+  GENERATABLE_ACTION_VERBS,
+  RESERVED_ACTION_VERBS,
+} from 'shared/recording/nl-intent.ts';
 
 describe('buildAnalystSystemPrompt', () => {
   it('limits component batches to component conditions and relevant guidance', () => {
@@ -182,11 +188,33 @@ describe('buildDesignerSystemPrompt', () => {
       humanReviewFeedback: '',
     } as any);
 
-    expect(prompt).toContain('An empty object `{}` is always invalid');
+    expect(prompt).toContain('Tool-Use Structured Output');
     expect(prompt).toContain('Do not end your analysis until you have described at least one complete test case for extraction.');
     expect(prompt).toContain('For EVERY object in `draftTestCases`, these fields are mandatory');
-    expect(prompt).toContain('end with a single JSON code block');
-    expect(prompt).toContain('The block must contain COMPLETE data');
+    expect(prompt).toContain('declare_step');
+    expect(prompt).toContain('declare_case');
+  });
+
+  it('enforces a single output mode (all tools OR all JSON — never mixed)', () => {
+    const prompt = buildDesignerSystemPrompt({
+      approvedConditions: [{
+        id: 'C-1', condition: 'Verify login', priority: 'high', category: 'functional',
+        primaryTechnique: 'Equivalence Partitioning', secondaryTechniques: [], riskLevel: 'high',
+        requirementId: 'REQ-1',
+      }],
+      projectContext: { name: 'Demo Project', pages: [], endpoints: [] },
+      businessFlowBlueprints: [],
+      humanReviewFeedback: '',
+    } as any);
+
+    // The single-mode fenceline must be present to stop the LLM from declaring a
+    // few cases via tools then switching to a JSON block for the rest (a real
+    // failure that wastes a Phase 2 retry + rate-limit retries).
+    expect(prompt).toContain('ONE of TWO Modes');
+    expect(prompt).toContain('never mix');
+    expect(prompt).toContain('FENCELINE');
+    expect(prompt).toContain('Mode A');
+    expect(prompt).toContain('Mode B');
   });
 
   it('instructs the LLM to load designer_rules before designing test cases', () => {
@@ -268,6 +296,34 @@ describe('buildQualitySystemPrompt', () => {
     expect(prompt).not.toContain('Clarity (操作原子性，硬约束)');
     expect(prompt).not.toContain('只有一个动词');
     expect(prompt).toContain('quality_rules');
+  });
+});
+
+describe('vocabulary lock — Designer prompt mirrors nl-intent.ts constants', () => {
+  const prompt = buildDesignerSystemPrompt({
+    approvedConditions: [{
+      id: 'C-1',
+      condition: 'Verify login',
+      priority: 'high',
+      category: 'functional',
+      primaryTechnique: 'Equivalence Partitioning',
+      secondaryTechniques: [],
+      riskLevel: 'high',
+      requirementId: 'REQ-1',
+    }],
+    projectContext: { name: 'Demo Project', pages: [], endpoints: [] },
+    businessFlowBlueprints: [],
+    humanReviewFeedback: '',
+  } as any);
+
+  it('renders the action verb enums from the shared constants', () => {
+    expect(prompt).toContain(`\`${GENERATABLE_ACTION_VERBS.join(', ')}\``);
+    expect(prompt).toContain(`\`${RESERVED_ACTION_VERBS.join(', ')}\``);
+    expect(prompt).toContain(`\`${ACTION_WEB_VERBS.join(', ')}\``);
+  });
+
+  it('renders the expectation kind enum from the shared constant', () => {
+    expect(prompt).toContain(`\`${ASSERTABLE_EXPECTATION_KINDS.join(', ')}\``);
   });
 });
 

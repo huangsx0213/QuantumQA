@@ -1,6 +1,7 @@
 import type { SuiteVariable, TestCase, TestSuite } from '../../shared/contracts/index.ts';
 import { asArray, asId, asOptionalText, asText, normalizeStringRecord } from '../../shared/utils/index.ts';
 import { normalizeStep } from '../common/mapper.ts';
+import { normalizeAssertSteps } from '../../../shared/execution-core/assert-normalizer.ts';
 
 function normalizeSuiteVariable(input: Partial<SuiteVariable>): SuiteVariable {
   return {
@@ -10,14 +11,18 @@ function normalizeSuiteVariable(input: Partial<SuiteVariable>): SuiteVariable {
   };
 }
 
+function normalizeStepList(input: unknown): TestCase['steps'] {
+  return normalizeAssertSteps(asArray(input).map((step) => normalizeStep(step)));
+}
+
 function normalizeCase(input: Partial<TestCase>): TestCase {
   return {
     id: asId(input.id, 'case'),
     name: asText(input.name, 'New Test Case'),
     description: asText(input.description),
-    steps: asArray(input.steps).map((step) => normalizeStep(step)),
-    setupSteps: asArray(input.setupSteps).map((step) => normalizeStep(step)),
-    teardownSteps: asArray(input.teardownSteps).map((step) => normalizeStep(step)),
+    steps: normalizeStepList(input.steps),
+    setupSteps: normalizeStepList(input.setupSteps),
+    teardownSteps: normalizeStepList(input.teardownSteps),
   };
 }
 
@@ -31,7 +36,7 @@ export function normalizeSuite(input: Partial<TestSuite>): TestSuite {
     cases: asArray<TestCase>(input.cases).map((testCase) => normalizeCase(testCase)),
     variables: asArray<SuiteVariable>(input.variables).map((variable) => normalizeSuiteVariable(variable)),
     dataRows: asArray<Record<string, unknown>>(input.dataRows).map((row) => normalizeStringRecord(row)),
-    setupSteps: asArray(input.setupSteps).map((step) => normalizeStep(step)),
-    teardownSteps: asArray(input.teardownSteps).map((step) => normalizeStep(step)),
+    setupSteps: normalizeStepList(input.setupSteps),
+    teardownSteps: normalizeStepList(input.teardownSteps),
   };
 }

@@ -67,6 +67,9 @@ export function finalizeRunCompletion(
     if (suiteId && caseId) {
       // 预分配路径：更新已有的 suite/case 为 refined steps
       const nlCase = nlCaseRepo.get(run.nl_case_id);
+      if (!nlCase) {
+        Log.for('finalize-run').warn(`NL case ${run.nl_case_id} not found; suite will have no variables (steps with {{param}} may fail at runtime)`);
+      }
       const caseTitle = nlCase?.title ?? `AI Recorded Case (${run.nl_case_id})`;
       const testCase: TestCase = {
         id: caseId,

@@ -92,15 +92,25 @@ export function makePreparationNode(opts: PreparationNodeOptions) {
           reverseRef.get(refId)!.add(r.id);
         }
       }
+      // Pre-build indexes once instead of filter/find inside the loop (O(batch×N×refs) → O(N+batch×refs)).
+      const childACsByParent = new Map<string, (typeof allReqs)[number][]>();
+      const reqById = new Map<string, (typeof allReqs)[number]>();
+      for (const r of allReqs) {
+        if (r.level === 'ac') {
+          if (!childACsByParent.has(r.parentId)) childACsByParent.set(r.parentId, []);
+          childACsByParent.get(r.parentId)!.push(r);
+        }
+        reqById.set(r.id, r);
+      }
       // For each requirement in the current batch, walk up to its AC children
       // and check whether their relatedRequirementIds point to requirements in
       // other epics (outgoing cross-epic refs).
       for (const reqId of currentReqIds) {
-        const childACs = allReqs.filter(r => r.parentId === reqId && r.level === 'ac');
+        const childACs = childACsByParent.get(reqId) ?? [];
         for (const ac of childACs) {
           for (const refId of ac.relatedRequirementIds ?? []) {
             if (currentReqIds.has(refId)) continue; // same batch
-            const refReq = allReqs.find(r => r.id === refId);
+            const refReq = reqById.get(refId);
             const refEpic = reqEpicMap.get(refId);
             if (refReq && refEpic && refEpic.epicId !== currentEpicId) {
               crossEpicDependencies.push({
@@ -118,7 +128,7 @@ export function makePreparationNode(opts: PreparationNodeOptions) {
         const referencingACIds = reverseRef.get(reqId);
         if (referencingACIds) {
           for (const acId of referencingACIds) {
-            const acReq = allReqs.find(r => r.id === acId);
+            const acReq = reqById.get(acId);
             if (!acReq) continue;
             // The referencing AC's parent story is the cross-epic source.
             const sourceStoryId = acReq.parentId;

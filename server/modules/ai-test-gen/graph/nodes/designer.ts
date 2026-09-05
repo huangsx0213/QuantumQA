@@ -7,11 +7,13 @@ import { buildDesignerSystemPrompt, buildDesignerUserMessage, type ComponentCond
 import { buildDesignerSkills } from '../skills/skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createDesignerOutputProfile } from '../structured-output/designer.ts';
+import type { DraftTestCaseContract } from '../../../../../shared/recording/agent-contracts.ts';
 import { Log } from '../../../../shared/services/logger.ts';
 import {
   requireMatchingHtmlKnowledgeRuntime,
   type ResolvedHtmlKnowledgeRuntime,
 } from '../skills/html-knowledge.ts';
+import { AGENT_NODE_TIMEOUT_MS } from '../timing.ts';
 
 // ============================================================
 // Output Schema
@@ -29,7 +31,7 @@ export interface DesignerNodeOptions {
 }
 
 export function makeDesignerNode(opts: DesignerNodeOptions) {
-  const { provider, observer, timeoutMs = 600_000, signal } = opts;
+  const { provider, observer, timeoutMs = AGENT_NODE_TIMEOUT_MS, signal } = opts;
   const agentName = 'test_designer';
 
   return async (state: TestGenState): Promise<Partial<TestGenState>> => {
@@ -121,7 +123,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
           onToolCall: observer?.onToolCall,
         },
         agentName,
-        { signal: nodeSignal, agentName },
+        { signal: nodeSignal, agentName, timeoutMs },
       );
 
       const latencyMs = Date.now() - startTime;
@@ -135,6 +137,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       log.kv('selfReview.avg', avgScore.toFixed(1));
       log.kv('skill.calls', skillCallCount);
       log.kv('tokens', usage.input + usage.output);
+      log.kv('tokens.cached', usage.cached);
       log.kv('latency', `${latencyMs}ms`);
       if (skillCallCount > 0) {
         log.kv('skill.details', toolCallRecords!.map(tc => `${tc.name}(completed)`).join(', '));
@@ -142,7 +145,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       observer?.onComplete?.(agentName, usage, latencyMs, messages, validated);
 
       return {
-        draftTestCases: validated.draftTestCases as any,
+        draftTestCases: validated.draftTestCases as DraftTestCaseContract[],
         skillCalls: (toolCallRecords ?? []).map(tc => ({
           agent: agentName,
           skillName: tc.name,

@@ -24,6 +24,14 @@ export interface PreviousBatchSkillRepository {
 const OWNERSHIP_SAFE_REQUIREMENT_ERROR = 'Requirement not found in current project';
 const OWNERSHIP_SAFE_FLOW_ERROR = 'Flow not found in current project';
 
+/**
+ * 启发式识别"条件 ID"形态（如 C-001），用于给 LLM 传错参数时返回 actionable 提示。
+ * 项目 requirement ID 以 "req-" 为前缀，条件 ID 形如 C-001，冲突概率极低。
+ */
+function isConditionIdLike(id: string): boolean {
+  return /^C-?\d+(?:-[\w-]+)?$/i.test(id);
+}
+
 export function clearQueryCache(): void {
   reqDetailCache.clear();
   flowDetailCache.clear();
@@ -107,7 +115,12 @@ export function makeRequirementDetailQuery(
             reqDetailCache.set(cacheKey, result);
             return result;
           }
-          const result = { error: OWNERSHIP_SAFE_REQUIREMENT_ERROR };
+const result = isConditionIdLike(id)
+            ? {
+                error: OWNERSHIP_SAFE_REQUIREMENT_ERROR,
+                _hint: `"${id}" looks like a condition ID, not a requirement ID. Pass the condition's \`requirementId\` field (e.g. "req-...") instead.`,
+              }
+            : { error: OWNERSHIP_SAFE_REQUIREMENT_ERROR };
           reqDetailCache.set(cacheKey, result);
           return result;
         }
@@ -370,11 +383,19 @@ export function makeFlowDetailQuery(
         fdqLog.info(newIds.length > 1 ? `Batch querying ${newIds.length} flows` : `Querying flow ${newIds[0]}`);
       }
 
-      const queryOne = (flowId: string) => {
+const queryOne = (flowId: string) => {
         const cacheKey = scopedCacheKey(cacheScope, flowId);
         const flowStory = requirementsById.get(flowId);
         if (!flowStory || !flowStory.isFlow || flowStory.status !== 'APPROVED') {
-          const errResult = { error: OWNERSHIP_SAFE_FLOW_ERROR };
+          // 防呆：id 存在但不是可查 flow story 时，给出 actionable 提示（LLM 常误传 flow AC id）。
+          const hint = flowStory && !flowStory.isFlow
+            ? `"${flowId}" exists but is NOT a business flow story. Pass a flow story ID (isFlow=true, e.g. the parent story id), not a flow AC id or a regular requirement id.`
+            : flowStory?.isFlow && flowStory.status !== 'APPROVED'
+              ? `"${flowId}" is a flow story but its status is "${flowStory.status}"; only APPROVED flows are queryable.`
+              : undefined;
+          const errResult = hint
+            ? { error: OWNERSHIP_SAFE_FLOW_ERROR, _hint: hint }
+            : { error: OWNERSHIP_SAFE_FLOW_ERROR };
           flowDetailCache.set(cacheKey, errResult);
           return errResult;
         }
@@ -621,4 +642,56 @@ export function makePreviousBatchCasesQuery(
 
 function scopedCacheKey(projectId: string, id: string): string {
   return `${projectId}\0${id}`;
+}
+
+// ============================================================
+// draft_case_detail_query — pull one draft case's full text on demand.
+// Quality's user message carries a compact per-case summary (no steps/
+// preconditions/testData text) to avoid re-serializing the Designer's
+// output verbatim (token bloat). When F17 anti-redundancy, correctness,
+// or step-atomicity review needs the exact text, the LLM pulls it here.
+// ============================================================
+export function makeDraftCaseDetailQuery(
+  draftCases: Array<{
+    id: string;
+    title: string;
+    conditionId: string;
+    requirementId: string;
+    testLevel: string;
+    techniqueApplied: string;
+    coveredConditions: string[];
+    referencedComponentConditions: string[];
+    preconditions: string[];
+    testData: string[];
+    steps: Array<{ stepNumber: number; action: string; expected: string; intent?: unknown }>;
+    tags: string[];
+    selfReview?: unknown;
+  }>,
+): SkillDefinition {
+  const byId = new Map(draftCases.map((d) => [d.id, d]));
+  return {
+    name: 'draft_case_detail_query',
+    description: 'Pull the FULL text of one or more draft test cases (all steps, preconditions, testData, tags) by case id. Use ONLY when the compact case summary in your input is insufficient — e.g. to run the F17 component-vs-integration redundancy check, verify step atomicity, or inspect a step\'s exact expected text before changing it. Pass a single caseId or an array.',
+    schema: z.object({
+      caseId: z.union([z.string(), z.array(z.string())]).describe('A single draft case id (e.g. "TC-001") or an array of ids'),
+    }),
+    func: async (args) => {
+      const rawId = args.caseId;
+      const ids: string[] = Array.isArray(rawId) ? rawId : [rawId];
+      const isBatch = ids.length > 1 || Array.isArray(rawId);
+      const result: Record<string, unknown> = {};
+      let found = 0;
+      for (const id of ids) {
+        const draft = byId.get(id);
+        if (draft) {
+          result[id] = draft;
+          found++;
+        } else {
+          result[id] = { error: `Draft case "${id}" not found in the current batch` };
+        }
+      }
+      Log.for('skill:draft_case_detail_query').kv('cases', `${found}/${ids.length}`);
+      return isBatch ? result : result[ids[0]];
+    },
+  };
 }

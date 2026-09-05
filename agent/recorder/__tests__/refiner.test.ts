@@ -62,6 +62,22 @@ describe('dedupeSteps', () => {
     ];
     expect(dedupeSteps(steps).length).toBe(2);
   });
+
+  it('preserves assertions from the deduped duplicate (start nav vs step0 goto)', () => {
+    const steps = [
+      makeStep({ id: 's1', action: 'goto', target: 'https://app.com/login', data: 'https://app.com/login' }),
+      makeStep({
+        id: 's2',
+        action: 'goto',
+        target: 'https://app.com/login',
+        data: 'https://app.com/login',
+        metadata: { aiAssertion: { source: 'UI_PAGE_URL', operator: 'CONTAINS', expectedValue: '/login' } },
+      }),
+    ];
+    const out = dedupeSteps(steps);
+    expect(out).toHaveLength(1);
+    expect((out[0].metadata as any).aiAssertion).toMatchObject({ source: 'UI_PAGE_URL', expectedValue: '/login' });
+  });
 });
 
 describe('mapAssertions', () => {

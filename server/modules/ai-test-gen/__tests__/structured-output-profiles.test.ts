@@ -189,7 +189,6 @@ describe('qualityOutputProfile validation', () => {
     'conditionId',
     'conditionSummary',
     'requirementId',
-    'testLevel',
     'primaryTechnique',
     'category',
     'coverageStatus',
@@ -209,7 +208,6 @@ describe('qualityOutputProfile validation', () => {
     'conditionId',
     'conditionSummary',
     'requirementId',
-    'testLevel',
     'primaryTechnique',
     'category',
     'coverageStatus',
@@ -223,6 +221,17 @@ describe('qualityOutputProfile validation', () => {
         rows: [{ ...matrix.rows[0], [field]: null }],
       },
     }))).toThrow(new RegExp(field));
+  });
+
+  it('accepts a coverageMatrix row with omitted testLevel (reconciled deterministically — D1, real-world Quality retry cause)', () => {
+    const matrix = makeCoverageMatrix();
+    const row = withoutField(matrix.rows[0], 'testLevel');
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase()],
+      coverageMatrix: { ...matrix, rows: [row] },
+    }));
+    // testLevel now optional at schema; reconcileCoverageMatrix fills it downstream.
+    expect(parsed.coverageMatrix?.rows[0]).not.toHaveProperty('testLevel');
   });
 
   it.each(['totalConditions', 'coveredConditions', 'missingConditions'] as const)(
@@ -374,6 +383,132 @@ describe('qualityOutputProfile', () => {
     expect(parsed.finalTestCases[0].tags).toEqual([]);
     expect(parsed.finalTestCases[0].changeLog[0].from).toBeUndefined();
     expect(parsed.finalTestCases[0].changeLog[0].to).toBeUndefined();
+  });
+
+  it.each(['Component', 'Integration', 'COMPONENT', 'INTEGRATION'] as const)(
+    'normalizes uppercase testLevel %s to lowercase (real-world Quality Phase 2 retry cause)',
+    (testLevel) => {
+      const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+        finalTestCases: [makeQualityCase({ testLevel })],
+      }));
+      expect(parsed.finalTestCases[0].testLevel).toBe(testLevel.toLowerCase());
+    },
+  );
+
+  it.each([
+    ['elementVisible', 'element-visible'],
+    ['Text', 'text-visible'],
+    ['not-visible', 'element-hidden'],
+    ['URL', 'url'],
+    ['apiBody', 'api-body'],
+    ['httpStatus', 'network'],
+  ] as const)('normalizes expectation kind variant "%s" → "%s"', (rawKind, expected) => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'verify the element',
+          expected: 'The element is visible.',
+          intent: { targetHint: 'element', expectation: { kind: rawKind } },
+        }],
+      })],
+    }));
+    const exp = (parsed.finalTestCases[0].steps[0].intent as any)?.expectation;
+    expect(exp?.kind).toBe(expected);
+  });
+
+  it('drops an unrecognizable expectation kind instead of failing the whole batch', () => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'verify the element',
+          expected: 'The element is visible.',
+          intent: { targetHint: 'element', expectation: { kind: 'completelyMadeUp' } },
+        }],
+      })],
+    }));
+    const intent = (parsed.finalTestCases[0].steps[0].intent as any);
+    expect(intent?.targetHint).toBe('element');
+    expect(intent?.expectation).toBeUndefined();
+  });
+
+  it('drops a transient expectation (docs/08: not assertable, rewrite as observable end state)', () => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'click the button',
+          expected: 'The button is not in loading state anymore.',
+          intent: { targetHint: 'button', expectation: { kind: 'transient', value: 'loading' } },
+        }],
+      })],
+    }));
+    const intent = (parsed.finalTestCases[0].steps[0].intent as any);
+    expect(intent?.targetHint).toBe('button');
+    expect(intent?.expectation).toBeUndefined();
+  });
+
+  it('defaults changeLog[].reason to "" when missing (real-world Quality Phase 2 retry cause)', () => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        changeLog: [
+          { field: 'testData', from: 'x', to: 'y' }, // reason omitted
+          { field: 'testLevel', from: null, to: null, reason: null }, // reason null
+        ],
+      })],
+    }));
+    const clog = parsed.finalTestCases[0].changeLog;
+    expect(clog[0].reason).toBe('');
+    expect(clog[1].reason).toBe('');
+  });
+
+  it('strips a semicolon-joined expected to the first assertion (real-world Quality Phase 2 retry cause)', () => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'click the submit button',
+          expected: "The form submission is blocked; no navigation occurs.",
+        }],
+      })],
+    }));
+    expect(parsed.finalTestCases[0].steps[0].expected).toBe('The form submission is blocked');
+  });
+
+  it.each(['；', ';'])('strips a %s-joined expected keeping the primary assertion', (sep) => {
+    const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
+      finalTestCases: [makeQualityCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'click the submit button',
+          expected: `first assertion${sep} second assertion ${sep} third`,
+        }],
+      })],
+    }));
+    expect(parsed.finalTestCases[0].steps[0].expected).toBe('first assertion');
+  });
+
+  it('falls back to the draft testLevel when the LLM writes an unrecognizable value', () => {
+    const profile = createQualityOutputProfile([
+      { id: 'TC-1', conditionId: 'C-1', requirementId: 'REQ-1', expectedTestLevel: 'integration', referencedComponentConditions: ['C-1'] },
+    ]);
+    const parsed = profile.parse(profile.normalize({
+      finalTestCases: [makeQualityCase({
+        testLevel: 'System Level',
+        referencedComponentConditions: ['C-1'],
+      })],
+    }));
+    expect(parsed.finalTestCases[0].testLevel).toBe('integration');
+  });
+
+  it('keeps an unrecognizable testLevel when no draft fallback exists (schema still rejects)', () => {
+    const profile = createQualityOutputProfile([]);
+    const normalized = profile.normalize({
+      finalTestCases: [makeQualityCase({ testLevel: 'System Level', coveredConditions: ['C-1'] })],
+    }) as any;
+    expect(normalized.finalTestCases[0].testLevel).toBe('System Level');
+    expect(() => profile.parse(normalized)).toThrow(/testLevel/);
   });
 
   it('rejects outputs that do not preserve every draft case id', () => {
@@ -677,6 +812,229 @@ describe('designerOutputProfile', () => {
     });
     const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [ok] }));
     expect(parsed.draftTestCases[0].steps[0].action).toBe('wait for the network response');
+  });
+
+  it('rewrites "leave X empty" steps into a valid verify assertion (avoids Phase 2 retries)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'leave the username field empty',
+        expected: 'The username field is empty',
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('verify the username field is empty');
+    expect(step.intent?.expectation).toEqual({ kind: 'value', value: '' });
+  });
+
+  it('rewrites "ensure X is empty" into a valid verify assertion (the #1 real-world Phase 2 retry cause)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'ensure the username field is empty',
+        expected: 'The username field is empty',
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('verify the username field is empty');
+    expect(step.intent?.expectation).toEqual({ kind: 'value', value: '' });
+  });
+
+  it.each([
+    ['visible', { kind: 'element-visible' }],
+    ['hidden', { kind: 'element-hidden' }],
+    ['not visible', { kind: 'element-hidden' }],
+    ['not present', { kind: 'element-hidden' }],
+    ['absent', { kind: 'element-hidden' }],
+    ['checked', { kind: 'element-state', value: 'checked' }],
+    ['unchecked', { kind: 'element-state', value: 'unchecked' }],
+    ['enabled', { kind: 'element-state', value: 'enabled' }],
+    ['disabled', { kind: 'element-state', value: 'disabled' }],
+  ] as const)('rewrites "ensure the checkbox is %s" → verify + %j', (state, expected) => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: `ensure the checkbox is ${state}`,
+        expected: `The checkbox is ${state}`,
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe(`verify the checkbox is ${state}`);
+    expect(step.intent?.expectation).toEqual(expected);
+  });
+
+  it('rewrites "make sure X is empty" into a valid verify assertion', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'make sure the password field is empty',
+        expected: 'The password field is empty',
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('verify the password field is empty');
+    expect(step.intent?.expectation).toEqual({ kind: 'value', value: '' });
+  });
+
+  it('preserves an LLM-provided expectation when rewriting a non-verb action', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'ensure the username field is empty',
+        expected: 'The username field is empty',
+        intent: { targetHint: 'username input', expectation: { kind: 'value', value: '' } },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('verify the username field is empty');
+    expect(step.intent?.targetHint).toBe('username input');
+    expect(step.intent?.expectation).toEqual({ kind: 'value', value: '' });
+  });
+
+  it('does not rewrite an action that already starts with a vocabulary verb', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'verify the page URL contains /dashboard',
+        expected: 'The URL contains /dashboard',
+        intent: { expectation: { kind: 'url', value: '/dashboard' } },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    expect(parsed.draftTestCases[0].steps[0].action).toBe('verify the page URL contains /dashboard');
+  });
+
+  // === intent.expectation null/非法类型容错（real-world Designer Phase 1.5 retry cause） ===
+  it('drops a null intent.expectation instead of failing the whole batch (real-world Phase 1.5 retry cause)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'click the button',
+        expected: 'The button is clicked.',
+        intent: { targetHint: 'button', expectation: null },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.intent?.targetHint).toBe('button');
+    expect(step.intent?.expectation).toBeUndefined();
+  });
+
+  it('drops a non-object intent.expectation (array/string) instead of failing the whole batch', () => {
+    for (const badExp of [['url'], 'url-value', 42, true]) {
+      const draft = makeDesignerCase({
+        steps: [{
+          stepNumber: 1,
+          action: 'click the button',
+          expected: 'The button is clicked.',
+          intent: { targetHint: 'button', expectation: badExp },
+        }],
+      });
+      expect(() => designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] })))
+        .not.toThrow(/expected object/);
+    }
+  });
+
+  it('drops a null expectation on a verify step, keeping a valid synthesized expectation when rewrite applies', () => {
+    // verify 步骤若 expectation 为 null 会被丢弃——rewriteNonVerbAction 若命中会补回。
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'ensure the username field is empty',
+        expected: 'The username field is empty',
+        intent: { expectation: null },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('verify the username field is empty');
+    expect(step.intent?.expectation).toEqual({ kind: 'value', value: '' });
+  });
+
+  // === intent.data 确定性提取（处理 "fill X with 'Y'" 值在文本但未结构化的情况） ===
+  // 这些是实测导致整批失败 + Phase 2 重试 + 触发 429 限流的确切模式。
+
+  it('extracts intent.data from "fill X with <value>" when the LLM omits it (real-world Phase 2 retry cause)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: "fill the username field with 'admin'",
+        expected: "The username field displays 'admin'.",
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe("fill the username field with 'admin'");
+    expect(step.intent?.data).toBe('admin');
+  });
+
+  it('extracts intent.data from "fill \'value\' into X" variant', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: "fill 'admin123' into the password field",
+        expected: 'The password field accepts the value.',
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    expect(parsed.draftTestCases[0].steps[0].intent?.data).toBe('admin123');
+  });
+
+  it('extracts intent.data from "navigate to <url>" when the LLM omits it', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'navigate to /login',
+        expected: 'The login page is loaded.',
+        intent: { expectation: { kind: 'url', value: '/login' } },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    expect(parsed.draftTestCases[0].steps[0].intent?.data).toBe('/login');
+  });
+
+  it('preserves an LLM-provided intent.data (does not overwrite)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: "fill the username field with 'admin'",
+        expected: "The username field displays 'admin'.",
+        intent: { data: 'superuser' },
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    expect(parsed.draftTestCases[0].steps[0].intent?.data).toBe('superuser');
+  });
+
+  it('rewrites "fill X with \'\'" to "clear X" (empty value → clear verb, no data needed)', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: "fill the username field with ''",
+        expected: 'The username field is empty.',
+      }],
+    });
+    const parsed = designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] }));
+    const step = parsed.draftTestCases[0].steps[0];
+    expect(step.action).toBe('clear the username field');
+    expect(step.intent?.data).toBeUndefined();
+  });
+
+  it('still rejects a fill step with no value at all (no quoted token, no "with")', () => {
+    const draft = makeDesignerCase({
+      steps: [{
+        stepNumber: 1,
+        action: 'fill the username field',
+        expected: 'The field is filled.',
+      }],
+    });
+    expect(() => designerOutputProfile.parse(designerOutputProfile.normalize({ draftTestCases: [draft] })))
+      .toThrow(/requires intent\.data/);
   });
 
   it('wraps a top-level test case object and normalizes nullable fields', () => {

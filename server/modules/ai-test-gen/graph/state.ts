@@ -1,10 +1,13 @@
 import { Annotation } from '@langchain/langgraph';
 import type {
-  TestCondition,
-  NlTestCase,
-  CoverageMatrix,
   PipelineBusinessFlowBlueprint,
 } from '../../../../shared/contracts/index.ts';
+import type {
+  TestConditionContract,
+  DraftTestCaseContract,
+  FinalTestCaseContract,
+  CoverageMatrixContract,
+} from '../../../../shared/recording/agent-contracts.ts';
 import type { HtmlKnowledgeReference } from '../html-knowledge/types.ts';
 
 export interface BatchContext {
@@ -159,23 +162,23 @@ export const TestGenStateAnnotation = Annotation.Root({
 
   // === Test Analyst Outputs ===
   requirementAnalysis: Annotation<{ overallApproach: string; riskAssessmentSummary: string } | undefined>,
-  testConditions: Annotation<TestCondition[] | undefined>,
-  approvedConditions: Annotation<TestCondition[] | undefined>,
+  testConditions: Annotation<TestConditionContract[] | undefined>,
+  approvedConditions: Annotation<TestConditionContract[] | undefined>,
 
   // === Test Designer Outputs ===
-  draftTestCases: Annotation<NlTestCase[] | undefined>,
-  approvedDraftCases: Annotation<NlTestCase[] | undefined>,
+  draftTestCases: Annotation<DraftTestCaseContract[] | undefined>,
+  approvedDraftCases: Annotation<DraftTestCaseContract[] | undefined>,
 
   // === Quality Manager Outputs ===
-  finalTestCases: Annotation<NlTestCase[] | undefined>,
-  coverageMatrix: Annotation<CoverageMatrix | undefined>,
+  finalTestCases: Annotation<FinalTestCaseContract[] | undefined>,
+  coverageMatrix: Annotation<CoverageMatrixContract | undefined>,
 
   // === Auto-repair: preserved cases + full condition list for incremental patch ===
   // When checkpoint_3 routes back to Designer for missing coverage, these hold
   // the already-reviewed cases and the full condition list so Designer only
   // generates cases for the missing conditions, and checkpoint_2 merges them back.
-  preservedCases: Annotation<NlTestCase[] | undefined>,
-  allApprovedConditions: Annotation<TestCondition[] | undefined>,
+  preservedCases: Annotation<DraftTestCaseContract[] | undefined>,
+  allApprovedConditions: Annotation<TestConditionContract[] | undefined>,
 
   // === Generation Mode ===
   generationMode: Annotation<'component' | 'flow' | 'mixed'>,

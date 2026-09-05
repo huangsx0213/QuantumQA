@@ -331,11 +331,12 @@ export class TestGenRepository {
   }
 
   /** Get accumulated token usage and latency from completed agent logs for a run (used when resuming). */
-  getAccumulatedTokenUsage(runId: string): { prompt_tokens: number; completion_tokens: number; reasoning_tokens: number; latency_ms: number } {
+getAccumulatedTokenUsage(runId: string): { prompt_tokens: number; completion_tokens: number; reasoning_tokens: number; cached_tokens: number; latency_ms: number } {
     const row = this.database.prepare(
       `SELECT COALESCE(SUM(CAST(COALESCE(json_extract(token_usage, '$.input'), '0') AS INTEGER)), 0) as prompt_tokens,
               COALESCE(SUM(CAST(COALESCE(json_extract(token_usage, '$.output'), '0') AS INTEGER)), 0) as completion_tokens,
               COALESCE(SUM(CAST(COALESCE(json_extract(token_usage, '$.reasoning'), '0') AS INTEGER)), 0) as reasoning_tokens,
+              COALESCE(SUM(CAST(COALESCE(json_extract(token_usage, '$.cached'), '0') AS INTEGER)), 0) as cached_tokens,
               COALESCE(SUM(COALESCE(latency_ms, 0)), 0) as latency_ms
        FROM test_gen_agent_logs WHERE run_id = ? AND status = 'COMPLETED'`
     ).get(runId) as any;
@@ -343,6 +344,7 @@ export class TestGenRepository {
       prompt_tokens: row?.prompt_tokens ?? 0,
       completion_tokens: row?.completion_tokens ?? 0,
       reasoning_tokens: row?.reasoning_tokens ?? 0,
+      cached_tokens: row?.cached_tokens ?? 0,
       latency_ms: row?.latency_ms ?? 0,
     };
   }
@@ -365,7 +367,7 @@ export class TestGenRepository {
     phase?: string;
     inputPrompt?: unknown;
     outputData?: unknown;
-    tokenUsage?: { input: number; output: number; reasoning?: number };
+    tokenUsage?: { input: number; output: number; reasoning?: number; cached?: number };
     latencyMs?: number | null;
     rawTrace?: unknown[];
     status: 'RUNNING' | 'COMPLETED' | 'FAILED';

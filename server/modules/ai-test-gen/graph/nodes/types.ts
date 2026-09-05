@@ -27,7 +27,7 @@ export interface AgentObserver {
   onToolCall?: (agentName: string, toolCall: ToolCallRecord) => void;
   onComplete?: (
     agentName: string,
-    tokenUsage: { input: number; output: number; reasoning: number },
+    tokenUsage: { input: number; output: number; reasoning: number; cached?: number },
     latencyMs: number,
     inputPrompt?: ChatMessage[],
     outputData?: unknown,

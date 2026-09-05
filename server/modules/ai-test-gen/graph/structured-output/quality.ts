@@ -1,10 +1,17 @@
 import { z } from 'zod';
 import { nlStepIntentSchema } from 'shared/recording/nl-intent.ts';
+import {
+  finalTestCaseContractSchema,
+  type CoverageMatrixContract,
+} from 'shared/recording/agent-contracts.ts';
 import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
   coerceNumber,
   formatZodValidationError,
+  normalizeAtomicExpected,
+  normalizeNlStepIntent,
+  normalizeTestLevel,
   nullToEmptyArray,
   nullToUndefined,
 } from './helpers.ts';
@@ -42,50 +49,32 @@ const atomicExpected = (value: string): true | string => {
   return true;
 };
 
+const QualityCaseSchema = z.object({
+  ...finalTestCaseContractSchema.shape,
+  testData: z.array(coercedString),
+  steps: z.array(z.object({
+    stepNumber: z.number(),
+    action: z.string(),
+    // 统一测试标准（docs/08）：透传 Designer 产出的结构化意图。
+    // 可选——缺失时 Recorder 回退推断链路；prompt 要求原样保留不得改写。
+    intent: nlStepIntentSchema.optional(),
+    // F19: refine each step's `expected` for atomicity.
+    expected: z.string().superRefine((val, ctx) => {
+      const r = atomicExpected(val);
+      if (r !== true) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: r,
+        });
+      }
+    }),
+  })),
+});
+
 const QualityRuntimeSchema = z.object({
   finalTestCases: z.preprocess(
     (value) => Array.isArray(value) ? value : [],
-    z.array(z.object({
-      id: z.string(),
-      title: z.string(),
-      conditionId: z.string(),
-      requirementId: z.string(),
-      // F10 / F11 carried through from draft cases. Quality preserves them.
-      coveredConditions: z.array(z.string()).default([]),
-      referencedComponentConditions: z.array(z.string()).default([]),
-      priority: z.string(),
-      category: z.string(),
-      testLevel: z.enum(['component', 'integration']),
-      techniqueApplied: z.string(),
-      preconditions: z.array(z.string()),
-      testData: z.array(coercedString),
-      steps: z.array(z.object({
-        stepNumber: z.number(),
-        action: z.string(),
-        // 统一测试标准（docs/08）：透传 Designer 产出的结构化意图。
-        // 可选——缺失时 Recorder 回退推断链路；prompt 要求原样保留不得改写。
-        intent: nlStepIntentSchema.optional(),
-        // F19: refine each step's `expected` for atomicity.
-        expected: z.string().superRefine((val, ctx) => {
-          const r = atomicExpected(val);
-          if (r !== true) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: r,
-            });
-          }
-        }),
-      })),
-      tags: z.array(z.string()).default([]),
-      status: z.string().default('approved'),
-      reviewSummary: z.string(),
-      changeLog: z.array(z.object({
-        field: z.string(),
-        from: z.string().optional(),
-        to: z.string().optional(),
-        reason: z.string(),
-      })).default([]),
-    })).min(1),
+    z.array(QualityCaseSchema).min(1),
   ),
   // Coverage matrix: F27 — REQUIRED for new runs (was optional for backward compat).
   // The LLM is the source of truth: one row per Analyst conditionId.
@@ -96,7 +85,10 @@ const QualityRuntimeSchema = z.object({
       conditionId: z.string(),
       conditionSummary: z.string(),
       requirementId: z.string(),
-      testLevel: z.string(),
+      // D1 原则：testLevel 由 reconcileCoverageMatrix 确定性重算
+      //（conditionType==='flow' → integration，否则 component）。LLM 实测每次都省略它，
+      // 强制必填 → Phase 1 整批失败 → 回退 Phase 2（浪费一轮）。改为可选，由 TS 层兜底。
+      testLevel: z.string().optional(),
       primaryTechnique: z.string(),
       category: z.string(),
       conditionType: z.enum(['component', 'flow']).optional(),
@@ -393,6 +385,7 @@ function coerceChangeLogValue(v: unknown): string | undefined {
 
 function normalizeFinalTestCase(
   value: unknown,
+  fallbackTestLevelById?: Map<string, 'component' | 'integration'>,
 ): Record<string, unknown> {
   const tc = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const steps = Array.isArray(tc.steps)
@@ -401,6 +394,10 @@ function normalizeFinalTestCase(
         return {
           ...normalizedStep,
           stepNumber: coerceNumber(normalizedStep.stepNumber),
+          intent: normalizeNlStepIntent(normalizedStep.intent),
+          // 分号拼接的 expected 剥离为主断言（Quality 评审时 LLM 常把两个断言并一句，
+          // 触发 atomicExpected 整批拒绝；确定性保留第一段避免 3 次重跑）
+          expected: normalizeAtomicExpected(normalizedStep.expected),
         };
       })
     : tc.steps;
@@ -412,11 +409,24 @@ function normalizeFinalTestCase(
         ...normalizedChange,
         from: coerceChangeLogValue(normalizedChange.from),
         to: coerceChangeLogValue(normalizedChange.to),
+        // schema 要求 changeLog[].reason 为必填 string；LLM 频繁遗漏（undefined/null）。
+        // 确定性兜底为空串，避免整批因一个缺失 reason 触发 3 次重试。
+        reason: typeof normalizedChange.reason === 'string' ? normalizedChange.reason : '',
       };
     });
 
+  // testLevel: 先按大小写/变体归一化；仍无法映射时回退到 draft 的 expectedTestLevel
+  //（Quality 本就不该改 testLevel —— prompt 明确要求 preserve；兜底以 draft 为准）。
+  const normalizedTestLevel = normalizeTestLevel(tc.testLevel);
+  let testLevel = normalizedTestLevel;
+  if (normalizedTestLevel !== 'component' && normalizedTestLevel !== 'integration') {
+    const fallback = fallbackTestLevelById?.get(String(tc.id ?? ''));
+    if (fallback) testLevel = fallback;
+  }
+
   return {
     ...tc,
+    testLevel,
     coveredConditions: nullToEmptyArray(tc.coveredConditions as string[] | null | undefined),
     referencedComponentConditions: nullToEmptyArray(tc.referencedComponentConditions as string[] | null | undefined),
     steps,
@@ -484,8 +494,14 @@ export function createQualityOutputProfile(expectedDraftCases: ExpectedDraftCase
           input = { finalTestCases: arrayFromRecordValues<unknown>(input) };
         }
       }
+      const fallbackTestLevelById = new Map<string, 'component' | 'integration'>(
+        expectedDraftCases
+          .filter((d): d is ExpectedDraftCase & { expectedTestLevel: 'component' | 'integration' } => d.expectedTestLevel != null)
+          .map((d) => [d.id, d.expectedTestLevel]),
+      );
       const normalized: Record<string, unknown> = {
-        finalTestCases: arrayFromRecordValues<unknown>(input.finalTestCases).map(normalizeFinalTestCase),
+        finalTestCases: arrayFromRecordValues<unknown>(input.finalTestCases)
+          .map((tc) => normalizeFinalTestCase(tc, fallbackTestLevelById)),
       };
       // Preserve coverageMatrix if the LLM produced one
       if (input.coverageMatrix && typeof input.coverageMatrix === 'object') {
@@ -545,8 +561,10 @@ export function reconcileCoverageMatrix(
   llmMatrix: QualityRuntimeOutput['coverageMatrix'],
   finalTestCases: QualityRuntimeOutput['finalTestCases'],
   conditions: ReconcileCondition[],
-): QualityRuntimeOutput['coverageMatrix'] {
-  if (!llmMatrix || !conditions.length) return llmMatrix;
+): CoverageMatrixContract {
+  // 早退：无条件或矩阵缺失时原样返回（下游按未填充处理）；类型上标记为契约，
+  // 因为正常路径 reconcile 总是填充 testLevel。
+  if (!llmMatrix || !conditions.length) return llmMatrix as unknown as CoverageMatrixContract;
 
   // Build conditionId → testCaseIds mapping from finalTestCases
   const caseIdsByCondition = new Map<string, string[]>();

@@ -65,6 +65,8 @@ export function refineDraftSuite(
 /**
  * 去除连续重复步骤（相同 action+target+data）。
  * AI 录制时 Stagehand 可能重试同一动作，产生连续重复。
+ * 连续重复时保留首条，但继承后者的断言（aiAssertion / assertions / assertionProvenance），
+ * 避免起始导航被 step0 重复 goto 时断言随重复步骤一起丢失。
  */
 export function dedupeSteps(steps: TestStep[]): TestStep[] {
   if (steps.length === 0) return [];
@@ -74,6 +76,28 @@ export function dedupeSteps(steps: TestStep[]): TestStep[] {
     const curr = steps[i];
     if (prev.action !== curr.action || prev.target !== curr.target || prev.data !== curr.data) {
       result.push(curr);
+      continue;
+    }
+    const currMeta = (curr.metadata ?? {}) as any;
+    const prevMeta = (prev.metadata ?? {}) as any;
+    const hasAssertion = (curr.assertions?.length ?? 0) > 0 || !!currMeta.aiAssertion;
+    if (hasAssertion) {
+      result[result.length - 1] = {
+        ...prev,
+        assertions: [...(prev.assertions ?? []), ...(curr.assertions ?? [])],
+        metadata: {
+          ...(prev.metadata ?? {}),
+          ...(currMeta.aiAssertion ? { aiAssertion: currMeta.aiAssertion } : {}),
+          ...(currMeta.assertionProvenance
+            ? {
+                assertionProvenance: {
+                  ...((prevMeta.assertionProvenance ?? {}) as Record<string, string>),
+                  ...(currMeta.assertionProvenance as Record<string, string>),
+                },
+              }
+            : {}),
+        },
+      };
     }
   }
   return result;
@@ -96,6 +120,7 @@ export function mapAssertions(steps: TestStep[]): TestStep[] {
 const AI_ASSERTION_SOURCES: readonly AssertionSource[] = [
   'UI_TEXT', 'UI_VALUE', 'UI_ATTRIBUTE', 'UI_PAGE_URL', 'UI_PAGE_TITLE',
   'UI_ELEMENT_VISIBLE', 'UI_ELEMENT_ENABLED', 'UI_ELEMENT_CHECKED', 'UI_ELEMENT_COUNT',
+  'API_BODY_JSON',
 ];
 const AI_ASSERTION_OPERATORS: readonly AssertionOperator[] = [
   'EQUALS', 'CONTAINS', 'NOT_EQUALS', 'NOT_CONTAINS', 'EXISTS', 'MATCHES_REGEX',

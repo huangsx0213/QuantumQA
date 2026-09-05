@@ -866,6 +866,117 @@ describe('AIRecordingSession', () => {
     });
   });
 
+  describe('start() — verify 步骤生成 assert 步骤（Form B）', () => {
+    it('element-visible verify → assertVisible payload with resolved selector', async () => {
+      const nlCase = makeNlCase({
+        steps: [
+          {
+            sequence: 1,
+            action: 'navigate to /login',
+            expected: 'login page loads',
+            intent: { targetHint: 'browser', data: '/login', expectation: { kind: 'url', value: '/login' } },
+          },
+          {
+            sequence: 2,
+            action: 'verify the username field is visible',
+            expected: 'username field is present',
+            intent: { targetHint: 'username input field', expectation: { kind: 'element-visible', value: 'input' } },
+          },
+        ],
+      });
+      mockStagehand.observe.mockResolvedValue([{ selector: '#username', description: 'Username' }]);
+
+      const onConsolidatedStep = vi.fn();
+      const onEvent = vi.fn();
+      const session = new AIRecordingSession();
+      const result = await session.start({
+        nlCase,
+        providerConfig: makeProviderConfig(),
+        options: { headless: true },
+        onConsolidatedStep,
+        onEvent,
+      });
+
+      // observe 被调用（verify 步骤解析 targetHint → 选择器）
+      expect(mockStagehand.observe).toHaveBeenCalled();
+      // 生成了 assertVisible payload，经 onConsolidatedStep 桥发出
+      const assertSteps = onConsolidatedStep.mock.calls
+        .map((c) => c[0] as RecorderStepPayload)
+        .filter((p) => p.action === 'assertVisible');
+      expect(assertSteps).toHaveLength(1);
+      expect(assertSteps[0].locator?.selector).toBe('#username');
+      // 精炼后的步骤包含 assertVisible（Form B 独立断言步骤）
+      expect(result.steps.some((s) => s.action === 'assertVisible' && s.target === '#username')).toBe(true);
+    });
+
+    it('url verify → assertUrl payload with expected value (no element)', async () => {
+      const nlCase = makeNlCase({
+        steps: [
+          {
+            sequence: 1,
+            action: 'navigate to /login',
+            expected: 'login page loads',
+            intent: { targetHint: 'browser', data: '/login', expectation: { kind: 'url', value: '/login' } },
+          },
+          {
+            sequence: 2,
+            action: 'verify the browser navigates to dashboard',
+            expected: 'browser URL contains dashboard',
+            intent: { targetHint: 'browser page', expectation: { kind: 'url', value: '/dashboard' } },
+          },
+        ],
+      });
+
+      const onConsolidatedStep = vi.fn();
+      const onEvent = vi.fn();
+      const session = new AIRecordingSession();
+      await session.start({
+        nlCase,
+        providerConfig: makeProviderConfig(),
+        options: { headless: true },
+        onConsolidatedStep,
+        onEvent,
+      });
+
+      const assertSteps = onConsolidatedStep.mock.calls
+        .map((c) => c[0] as RecorderStepPayload)
+        .filter((p) => p.action === 'assertUrl');
+      expect(assertSteps).toHaveLength(1);
+      expect(assertSteps[0].value).toBe('/dashboard');
+    });
+
+    it('targetHint 解析失败时 verify 步骤降级（无 assert 步骤，不抛错）', async () => {
+      const nlCase = makeNlCase({
+        steps: [
+          {
+            sequence: 1,
+            action: 'verify the username field is visible',
+            expected: 'username field is present',
+            intent: { targetHint: 'username input field', expectation: { kind: 'element-visible', value: 'input' } },
+          },
+        ],
+      });
+      mockStagehand.observe.mockResolvedValue([]); // 解析不到选择器
+
+      const onConsolidatedStep = vi.fn();
+      const onEvent = vi.fn();
+      const session = new AIRecordingSession();
+      const result = await session.start({
+        nlCase,
+        providerConfig: makeProviderConfig(),
+        options: { headless: true },
+        onConsolidatedStep,
+        onEvent,
+      });
+
+      expect(result.steps).toHaveLength(0);
+      const assertSteps = onConsolidatedStep.mock.calls
+        .map((c) => c[0] as RecorderStepPayload)
+        .filter((p) => p.action === 'assertVisible');
+      expect(assertSteps).toHaveLength(0);
+    });
+  });
+
   describe('start() — AbortSignal 中止', () => {
     it('rejects immediately when the signal is already aborted', async () => {
       const controller = new AbortController();

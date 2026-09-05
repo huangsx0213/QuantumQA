@@ -15,8 +15,9 @@ interface AgentRunSnapshot {
   batch: number;
   inputPrompt: ChatMessage[] | null;
   outputData: unknown;
-  tokenUsage: { input: number; output: number; reasoning: number };
+  tokenUsage: { input: number; output: number; reasoning: number; cached?: number };
   latencyMs: number;
+  startedAt?: number;
   rawTrace: TraceEntry[];
   status: 'RUNNING' | 'COMPLETED' | 'FAILED';
   errorMessage?: string;
@@ -157,8 +158,9 @@ export class RunScope {
       batch,
       inputPrompt: inputPrompt ?? null,
       outputData: null,
-      tokenUsage: { input: 0, output: 0, reasoning: 0 },
+tokenUsage: { input: 0, output: 0, reasoning: 0 },
       latencyMs: 0,
+      startedAt: Date.now(),
       rawTrace: [],
       status: 'RUNNING',
       toolHistory: [...previousToolHistory],
@@ -186,8 +188,8 @@ export class RunScope {
     }, this.runId);
   }
 
-  recordAgentComplete(agentName: string, params: {
-    tokenUsage: { input: number; output: number; reasoning: number };
+recordAgentComplete(agentName: string, params: {
+    tokenUsage: { input: number; output: number; reasoning: number; cached?: number };
     latencyMs: number;
     inputPrompt?: ChatMessage[];
     outputData?: unknown;
@@ -252,6 +254,9 @@ export class RunScope {
       snap.status = 'FAILED';
       snap.errorMessage = error.message;
       snap.errorRawResponse = (error as any).rawResponse;
+      // 失败路径从未调用 recordAgentComplete，latencyMs 仍是 0——
+      // 用 start 时刻补记真实耗时，便于排查（如节点超时）。
+      if (!snap.latencyMs) snap.latencyMs = Date.now() - (snap.startedAt ?? Date.now());
       pipelineRepo.saveAgentLog({
         logId: snap.logId, batch, agentName, status: 'FAILED',
         errorMessage: snap.errorMessage, errorRawResponse: snap.errorRawResponse,

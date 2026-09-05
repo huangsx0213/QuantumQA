@@ -8,10 +8,10 @@ import { buildAnalystSkills } from '../skills/skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createAnalystOutputProfile } from '../structured-output/analyst.ts';
 import { Log } from '../../../../shared/services/logger.ts';
-import {
-  requireMatchingHtmlKnowledgeRuntime,
+import { requireMatchingHtmlKnowledgeRuntime,
   type ResolvedHtmlKnowledgeRuntime,
 } from '../skills/html-knowledge.ts';
+import { AGENT_NODE_TIMEOUT_MS } from '../timing.ts';
 
 // ============================================================
 // Output Schema
@@ -29,7 +29,7 @@ export interface AnalystNodeOptions {
 }
 
 export function makeAnalystNode(opts: AnalystNodeOptions) {
-  const { provider, observer, timeoutMs = 600_000, signal } = opts;
+  const { provider, observer, timeoutMs = AGENT_NODE_TIMEOUT_MS, signal } = opts;
   const agentName = 'test_analyst';
 
   return async (state: TestGenState): Promise<Partial<TestGenState>> => {
@@ -107,7 +107,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
           onToolCall: observer?.onToolCall,
         },
         agentName,
-        { signal: nodeSignal, agentName },
+        { signal: nodeSignal, agentName, timeoutMs },
       );
 
       const latencyMs = Date.now() - startTime;
@@ -122,6 +122,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       log.success(`EXIT ── ${tcCount} test conditions`);
       log.kv('skill.calls', skillCallCount);
       log.kv('tokens', usage.input + usage.output);
+      log.kv('tokens.cached', usage.cached);
       log.kv('latency', `${latencyMs}ms`);
       log.kv('techniques', JSON.stringify(techniqueBreakdown));
       if (skillCallCount > 0) {
@@ -131,7 +132,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
 
       return {
         requirementAnalysis: validated.requirementAnalysis,
-        testConditions: validated.testConditions as any,
+        testConditions: validated.testConditions,
         skillCalls: (toolCallRecords ?? []).map(tc => ({
           agent: agentName,
           skillName: tc.name,

@@ -75,7 +75,7 @@ function withSoftAssertions(suite: TestSuite): TestSuite {
 
 function summarize(
   report: ConfirmationReportLike,
-): { confirmedAssertionIds: string[]; reviewAssertionIds: string[]; blockedByInfraFailure: boolean; completedRuns: number } {
+): { confirmedAssertionIds: string[]; reviewAssertionIds: string[]; blockedByInfraFailure: boolean } {
   const confirmedAssertionIds: string[] = [];
   const reviewAssertionIds: string[] = [];
   for (const entry of report.entries) {
@@ -85,7 +85,7 @@ function summarize(
       reviewAssertionIds.push(entry.assertionId);
     }
   }
-  return { confirmedAssertionIds, reviewAssertionIds, blockedByInfraFailure: report.infraFailureRuns > 0, completedRuns: 0 };
+  return { confirmedAssertionIds, reviewAssertionIds, blockedByInfraFailure: report.infraFailureRuns > 0 };
 }
 
 export async function confirmDraftSuite(
@@ -114,10 +114,12 @@ export async function confirmDraftSuite(
       sseGateway.emit(params.runId, 'run:complete', params.runComplete);
     }
   };
-  const engine = params.engine ?? (startExecutionAndWait as unknown as ConfirmEngine);
+  const engine = params.engine ?? startExecutionAndWait;
+
+  // Load before try so catch can access the original (un-softened) suite
+  const suite = loader.getSuite(params.suiteId);
 
   try {
-    const suite = loader.getSuite(params.suiteId);
     if (!suite) {
       Log.for('confirm').warn(`Draft suite not found for confirmation: ${params.suiteId}`);
       finishUp();
@@ -175,21 +177,17 @@ export async function confirmDraftSuite(
       infraFailureRuns,
     };
     const summary = summarize(report);
-    summary.completedRuns = completedRuns;
 
-    // 三态写回：原始步骤（保留用户可见的 failureStrategy）+ 确认结论
-    const finalSuite = loader.getSuite(params.suiteId);
-    if (finalSuite) {
-      persistSuite({
-        ...finalSuite,
-        cases: finalSuite.cases.map((c) => ({
-          ...c,
-          steps: c.id === params.caseId ? emitAssertions(c.steps ?? [], report) : c.steps ?? [],
-        })),
-      });
-    }
+    // 三态写回：使用原始步骤（保留原始 failureStrategy），不重新加载 DB（已含 soft 变体）
+    persistSuite({
+      ...suite,
+      cases: suite.cases.map((c) => ({
+        ...c,
+        steps: c.id === params.caseId ? emitAssertions(c.steps ?? [], report) : c.steps ?? [],
+      })),
+    });
 
-    sseGateway.emit(params.runId, 'confirm:complete', { runId: params.runId, ...summary });
+    sseGateway.emit(params.runId, 'confirm:complete', { runId: params.runId, ...summary, completedRuns });
     Log.for('confirm').info(
       `confirmation done: runs=${completedRuns} confirmed=${summary.confirmedAssertionIds.length} review=${summary.reviewAssertionIds.length}${summary.blockedByInfraFailure ? ' (infra-failure)' : ''}`,
     );
@@ -198,7 +196,6 @@ export async function confirmDraftSuite(
     Log.for('confirm').error(`confirmation crashed: ${err?.message}`);
     // 兜底：关闭前端横幅并把全部 AI 提议送审（不误杀、不悬挂）
     try {
-      const suite = loader.getSuite(params.suiteId);
       if (suite) {
         persistSuite({
           ...suite,

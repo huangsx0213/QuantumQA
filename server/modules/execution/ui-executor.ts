@@ -446,8 +446,9 @@ export class UIExecutor {
 
     const resolvedSelector = step.target ? executionContext.interpolate(step.target) : '';
 
-    // Convert built-in assertion actions to step-level assertions for unified handling
-    if (BUILTIN_ASSERTION_ACTIONS.has(step.action)) {
+    // Convert built-in assertion actions to step-level assertions for unified handling.
+    // 已归一化的 assert 步骤（携带显式 StepAssertion）不重复转换，避免双重断言。
+    if (BUILTIN_ASSERTION_ACTIONS.has(step.action) && !(step.assertions && step.assertions.length > 0)) {
       const assertion = builtinActionToAssertion(step.action, data, resolvedSelector);
       if (assertion) {
         step.assertions = [assertion, ...(step.assertions || [])];

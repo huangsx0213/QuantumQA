@@ -1,4 +1,10 @@
 import type { TestGenState } from './state';
+import {
+  ACTION_WEB_VERBS,
+  ASSERTABLE_EXPECTATION_KINDS,
+  GENERATABLE_ACTION_VERBS,
+  RESERVED_ACTION_VERBS,
+} from 'shared/recording/nl-intent.ts';
 
 export interface ComponentConditionReference {
   referenceId: string;
@@ -422,9 +428,13 @@ export function serializeAC(ac: any) {
 }
 
 /**
- * Flow serialization for Designer/Quality prompts — keeps long key names
- * (sequence, actionSummary, requirementIds) since those prompts reference
- * them in instructions.
+ * Flow serialization for the Designer prompt — keeps `sequence` +
+ * `actionSummary` so the Designer can write steps that mirror the actual
+ * flow order. `requirementIds` is intentionally omitted: the Designer
+ * design instructions never reference it (step design is driven by each
+ * condition's `flowStepRefs`, already injected separately), and full
+ * step→requirement resolution is available on demand via
+ * `flow_detail_query`.
  */
 function serializeFlowForDesigner(f: any) {
   return {
@@ -433,8 +443,25 @@ function serializeFlowForDesigner(f: any) {
     steps: (f.steps ?? []).map((s: any) => ({
       sequence: s.sequence,
       actionSummary: s.actionSummary ?? '',
-      requirementIds: s.requirementIds ?? (s.requirementId ? [s.requirementId] : []),
     })),
+  };
+}
+
+/**
+ * Flow serialization for the Quality prompt — a compact summary (identity +
+ * step sequence only). Quality verifies flow coverage/traceability against
+ * each condition's `flowStepRefs` (already injected), not the full step
+ * text, so `actionSummary` full text is omitted here; the reviewer pulls
+ * full step details via `flow_detail_query` only when a specific step needs
+ * inspection.
+ */
+function serializeFlowForQuality(f: any) {
+  const steps = (f.steps ?? []) as any[];
+  return {
+    id: f.id,
+    name: f.name,
+    stepCount: steps.length,
+    stepSequence: steps.map((s: any) => s.sequence),
   };
 }
 
@@ -533,10 +560,10 @@ Call **designer_rules** to load the complete test case design rules. You MUST lo
 Apply the rules below. Decide \`testLevel\` per case using the Test Level Decision Rule.
 
 ## Detailed Rules (MANDATORY — load before designing)
-Call **designer_rules** to load the complete design rules (step atomicity, technique fidelity, test level decision, F12 anti-redundancy, F18 self-check, F31 budget, F32 test data format, self-review scoring). You MUST call this before designing any test cases.
+Call **designer_rules** before designing any test cases. The schema-critical rules you must NOT violate are inlined below.
 
 ## Required Fields
-For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`title\`, \`conditionId\`, \`requirementId\`, \`coveredConditions\`, \`referencedComponentConditions\` (for integration cases), \`priority\`, \`category\`, \`testLevel\`, \`techniqueApplied\`, \`preconditions\`, \`testData\`, \`steps\` (each step carrying a mandatory \`intent\` object — see the "step intent" section), \`postconditions\`, \`tags\`, \`selfReview\`. \`testLevel\` must be exactly one of \`"component"\` or \`"integration"\`. \`coveredConditions\` must include the primary \`conditionId\` and may include additional flow conditions. \`referencedComponentConditions\` must be non-empty for any \`testLevel: "integration"\` case. When the user input contains \`availableComponentConditions\`, use one or more of their exact \`referenceId\` values for \`referencedComponentConditions\`; never use an AC ID, a requirement ID, or a bare \`C-*\` ID from another batch. An empty object \`{}\` is always invalid. Do not end your analysis until you have described at least one complete test case for extraction.
+For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`title\`, \`conditionId\`, \`requirementId\`, \`coveredConditions\`, \`referencedComponentConditions\` (integration only), \`priority\`, \`category\`, \`testLevel\`, \`techniqueApplied\`, \`preconditions\`, \`testData\`, \`steps\` (each step carrying a mandatory \`intent\` object — see "step intent"), \`postconditions\`, \`tags\`, \`selfReview\`. Field rules are enforced in Strict Schema Constraints below. Do not end your analysis until you have described at least one complete test case for extraction.
 
 ## Strict Schema Constraints (HARD — schema will REJECT violations)
 These constraints are enforced by the Zod schema at parse time. Violations cause Phase 2 retries and may fail the entire pipeline after 3 attempts.
@@ -586,25 +613,20 @@ RIGHT (split into two steps — one assertion each):
 { "stepNumber": 4, "action": "Observe the browser network tab.", "expected": "No network request to the auth API endpoint is observed." }
 \`\`\`
 
-Other common WRONG patterns (all will be REJECTED):
-- \`"button is disabled; error message appears"\` → split: step A "button is disabled", step B "error message appears"
-- \`"validation error is shown; form remains on the current page"\` → split: step A "validation error is shown", step B "form remains on the current page"
-- \`"API returns 401; user session is not created"\` → split: step A "API returns 401", step B "user session is not created"
-
 **Rule: if your \`expected\` value contains a semicolon (\`;\` or \`；\`), it is WRONG. Split the step into multiple steps.**
 
 ### action field (step atomicity + verb-first)
 Each step's \`action\` is a **single operation** that **starts with a vocabulary verb** (the closed list below). The machine parses the action's verb directly — no separate actionType field. CamelCase verbs may be written space-separated: \`waitFor\` → "wait for the network response"; \`switchTo\` → "switch to frame ...".
 
 Forbidden compound patterns:
-- \`"while <gerund>"\` (e.g. "Enter password while leaving username empty")
-- \`", then"\` (e.g. "Enter username, then click submit")
-- \`"but leave/without"\` (e.g. "Enter username but leave password empty")
-- \`"both"\` (e.g. "Ensure both username and password are empty")
+- \`"while <gerund>"\` (e.g. "fill the password field while leaving the username empty")
+- \`", then"\` (e.g. "fill the username field, then click submit")
+- \`"but leave/without"\` (e.g. "fill the username field but leave the password empty")
+- \`"both"\` (e.g. "verify both username and password fields are empty")
 Split these into separate steps — one action per step.
 
 ### step intent (structured vocabulary — data & expectation only)
-Every step carries an \`intent\` object with the machine-readable data and expected outcome. The **action verb lives in the \`action\` text itself, NOT in intent**. CamelCase verbs may be written space-separated: \`waitFor\` → "wait for the network response"; \`switchTo\` → "switch to frame ...".
+Every step carries an \`intent\` object with the machine-readable data and expected outcome. The **action verb lives in the \`action\` text itself, NOT in intent**.
 
 \`\`\`json
 { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin'.",
@@ -613,13 +635,13 @@ Every step carries an \`intent\` object with the machine-readable data and expec
 \`\`\`
 
 **action verb** (closed enum — the FIRST word of \`action\`):
-\`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog, waitFor, verify, extract\`
-Reserved — will be REJECTED: \`api, runModule\`.
+\`${GENERATABLE_ACTION_VERBS.join(', ')}\`
+Reserved — will be REJECTED: \`${RESERVED_ACTION_VERBS.join(', ')}\`.
 
 ### Choosing the action verb — web operation vs verification (NEVER mix)
 Verbs fall into two roles. Pick the role that matches what the step actually does:
 
-- **Web operation** (real DOM interaction — the user acts): \`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog\`
+- **Web operation** (real DOM interaction — the user acts): \`${ACTION_WEB_VERBS.join(', ')}\`
 - **Verification** (pure check, NO DOM operation — asserts a state that already exists): \`verify\`
 - **Wait** (wait for a condition, no DOM operation): \`waitFor\`
 
@@ -633,7 +655,7 @@ RIGHT (click the menu first, then verify the result):
 Rule of thumb: if the app needs a user action to get there, write that action as a step with the real verb (click/select/navigate…); a verify step can only check what already happened.
 
 **expectation.kind** (closed enum — what is observable after the action):
-\`url, title, text-visible, element-visible, element-hidden, value, element-state, attribute, network, api-body\`
+\`${ASSERTABLE_EXPECTATION_KINDS.join(', ')}\`
 FORBIDDEN: \`transient\` (loading states, animations, focus — rewrite as an observable end state). \`api-body\` requires \`expression\` (JSONPath, e.g. \`$.token\`).
 
 **Hard rules (schema-rejected):**
@@ -662,117 +684,72 @@ FORBIDDEN: \`transient\` (loading states, animations, focus — rewrite as an ob
 - **flow_detail_query(flowId)**: flow details — single ID or array.
 - **istqb_guide(techniques?, context?)**: ISTQB technique + test-level guides. Omit \`techniques\` to load all.
 - **designer_rules**: load detailed design rules (step atomicity, technique fidelity, test level, F12, F18, F31, F32). Call before designing.
+- **declare_case(...)**: register a test case's metadata BEFORE its steps. See "Output Format" below.
+- **declare_step(...)**: declare ONE step (verb + targetHint + data/expectation). See "Output Format" below.
 
 ${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback}` : ''}
 
-## Output Format
-Stream your design rationale as plain text in markdown (short headings, blank-line-separated sections, bullets).
+## Output Format — ONE of TWO Modes (MANDATORY — never mix)
+Choose **one** mode for ALL cases in this batch; mixing is rejected as incomplete coverage.
 
-After your analysis, end with a single JSON code block containing the COMPLETE structured output. Do NOT add any text after this block.
+**Mode A (preferred) — Tool-Use Structured Output.** Declare EVERY case and EVERY step via \`declare_case\` + \`declare_step\` tool calls, for ALL cases, ALL steps — no exceptions. The tools' \`verb\` is a closed enum (API rejects any non-vocabulary verb at call time), which eliminates the most common Phase 2 retry cause.
 
-\`\`\`json
-{
-  "draftTestCases": [
-    {
-      "id": "TC-001",
-      "title": "End-to-end login: admin credentials propagate from auth API to session store and dashboard",
-      "conditionId": "C-002",
-      "requirementId": "req-aut-auth-login-valid-success",
-      "coveredConditions": ["C-002"],
-      "referencedComponentConditions": ["C-001", "C-003"],
-      "priority": "critical",
-      "category": "functional",
-      "testLevel": "integration",
-      "techniqueApplied": "Use Case Testing",
-      "preconditions": [
-        "User is on the login page",
-        "Browser session is clean with no existing authenticated session",
-        "Administrator account exists and is active in the user store (atomic behavior assumed via component condition C-001)",
-        "Session store is reachable and empty for this user",
-        "Client-side validation passes for any well-formed password (atomic behavior assumed via component condition C-003)"
-      ],
-      "testData": ["username = admin (valid partition)", "password = admin123 (valid partition)"],
-      "steps": [
-        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error.",
-          "intent": { "targetHint": "username input field", "data": "admin", "expectation": { "kind": "value", "value": "admin" } } },
-        { "stepNumber": 2, "action": "fill the password field with 'admin123'", "expected": "The password field accepts 'admin123' with no client-side validation error.",
-          "intent": { "targetHint": "password input field", "data": "admin123", "expectation": { "kind": "value", "value": "admin123" } } },
-        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The login request is sent to the auth API.",
-          "intent": { "targetHint": "Sign in button", "expectation": { "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" } } },
-        { "stepNumber": 4, "action": "waitFor the network response from /aut-api/auth/login", "expected": "The auth API returns HTTP 200.",
-          "intent": { "targetHint": "auth API response", "expectation": { "kind": "network", "method": "POST", "urlPattern": "/aut-api/auth/login", "value": "200" } } },
-        { "stepNumber": 5, "action": "verify the URL contains /dashboard", "expected": "The browser URL contains the dashboard path.",
-          "intent": { "targetHint": "browser page", "expectation": { "kind": "url", "value": "/dashboard" } } },
-        { "stepNumber": 6, "action": "verify the dashboard displays 'Welcome back, Admin!'", "expected": "The dashboard displays 'Welcome back, Admin!'.",
-          "intent": { "targetHint": "dashboard greeting", "expectation": { "kind": "text-visible", "value": "Welcome back, Admin!" } } }
-      ],
-      "postconditions": ["Authenticated session is created in the session store", "Dashboard is accessible for the logged-in user"],
-      "tags": ["authentication", "login", "dashboard", "session", "smoke", "happy-path", "integration"],
-      "selfReview": {
-        "score": 9,
-        "strengths": [
-          "Each step has exactly one action and one observable expected result",
-          "Every step carries a structured intent — machine-executable without guessing",
-          "Test data explicitly labeled with its EP partition for traceability",
-          "Steps 5-6 verify the downstream dashboard outcome, not just the API response — true integration coverage",
-          "coveredConditions lists C-002 (the flow condition this case covers); referencedComponentConditions lists C-001 and C-003 (the component behaviors assumed as preconditions) — clear traceability"
-        ],
-        "weaknesses": ["Does not assert specific dashboard widget content, only that the navigation succeeded"],
-        "suggestions": ["Add a follow-up case asserting specific dashboard elements", "Add an integration failure case: auth API timeout"]
-      }
-    },
-    {
-      "id": "TC-002",
-      "title": "Reject login with invalid password format (missing special character)",
-      "conditionId": "C-001",
-      "requirementId": "req-aut-auth-login-valid-success",
-      "coveredConditions": ["C-001"],
-      "referencedComponentConditions": [],
-      "priority": "high",
-      "category": "error",
-      "testLevel": "component",
-      "techniqueApplied": "Equivalence Partitioning",
-      "preconditions": [
-        "User is on the login page",
-        "Client-side password validation rule requires at least one special character"
-      ],
-      "testData": ["password = weakpass123 (invalid partition: no special character)"],
-      "steps": [
-        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error.",
-          "intent": { "targetHint": "username input field", "data": "admin", "expectation": { "kind": "value", "value": "admin" } } },
-        { "stepNumber": 2, "action": "fill the password field with 'weakpass123'", "expected": "A client-side validation message indicates the password format is invalid.",
-          "intent": { "targetHint": "password input field", "data": "weakpass123", "expectation": { "kind": "text-visible", "value": "invalid" } } },
-        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The form is not submitted and the user remains on the login page.",
-          "intent": { "targetHint": "Sign in button", "expectation": { "kind": "url", "value": "/login" } } }
-      ],
-      "postconditions": ["No session is created", "User remains on the login page"],
-      "tags": ["authentication", "login", "validation", "negative", "component"],
-      "selfReview": {
-        "score": 8,
-        "strengths": [
-          "Stays within the login UI component — no cross-component assertions, correctly honoring testLevel=component",
-          "Test data names the invalid partition explicitly",
-          "coveredConditions lists only C-001; referencedComponentConditions is empty because this is a component case"
-        ],
-        "weaknesses": ["Does not test the server-side rejection path separately"],
-        "suggestions": ["Add a component case where the password passes client-side validation but is rejected server-side"]
-      }
-    }
-  ]
-}
+**Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end (all cases, all steps). Semantic correctness of \`action\`/\`intent\`/\`data\`/\`expectation\` is your responsibility — the schema still rejects violations.
+
+**FENCELINE: pick one mode before the first tool call. ANY \`declare_\` call locks you into Mode A — complete every step via tools (NO JSON block). If you made NO \`declare_\` call, emit one complete JSON block (Mode B).**
+
+### Mode A workflow — BATCH ALL REMAINING CASES IN ONE ROUND:
+Per case: one \`declare_case\` call + one \`declare_step\` call carrying the case's ENTIRE \`steps\` array (omit \`stepNumber\` — auto-numbers 1,2,3…).
+
+**HARD RULE — declare EVERY remaining case in a SINGLE tool-call round.** In the round where you start declaring cases, emit ALL pending cases back-to-back as parallel tool calls (declare_case + declare_step pairs for every case), NOT one case per round. Declaring one case per round balloons rounds 30× and re-sends the whole history every time — the #1 token waste. Example: 15 conditions → 15 declare_case + 15 declare_step calls in ONE round, then exit.
+
+Steps:
+1. For EACH case: call \`declare_case\` (id, title, conditionId, requirementId, testLevel, techniqueApplied, preconditions, testData, coveredConditions, referencedComponentConditions, priority, category, postconditions, tags).
+2. Immediately after, call \`declare_step\` with that case's ENTIRE \`steps\` array. Each step entry: \`verb\` (vocabulary enum), \`targetHint\`, \`data\` (REQUIRED for fill/select/navigate/upload/press), \`expectation\` (REQUIRED for verify/waitFor), optional \`expected\`.
+3. Repeat pairs for EVERY remaining case IN THE SAME ROUND (parallel calls). **exit ReAct only after the LAST case's LAST step is declared — ideally the same round you started.**
+
+**Tool-enforced rules (API rejects violations):**
+- \`verb\` ∈ closed enum: \`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog, waitFor, verify, extract\`. NO \`enter\`/\`type\`/\`submit\`/\`ensure\`/\`observe\`/\`check that\`/\`make sure\`/\`go to\`/\`choose\`.
+- \`data\` REQUIRED for \`fill\`/\`select\`/\`navigate\`/\`upload\`/\`press\`; \`expectation\` REQUIRED for \`verify\`/\`waitFor\`.
+- \`element-state\` \`expectation.value\` ∈ \`enabled, disabled, checked, unchecked\`; \`navigate\` \`data\` = URL or space-free path (e.g. \`/login\`).
+
+**Action sentence** is reconstructed as \`\${verb} \${targetHint}\` (+ \` with '\${data}'\` when present); expected outcome captured as \`expectation\`.
+
+### Example — Mode A: declaring two cases via tools (batch declare_step)
+For \`C-002\` (integration login) and \`C-001\` (component validation), your tool calls look like:
+
 \`\`\`
+declare_case({ id: "TC-001", title: "End-to-end login: admin credentials propagate from auth API to session store and dashboard", conditionId: "C-002", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-002"], referencedComponentConditions: ["C-001", "C-003"], priority: "critical", category: "functional", testLevel: "integration", techniqueApplied: "Use Case Testing", preconditions: ["User is on the login page", "Administrator account exists and is active (per C-001)"], testData: ["username = admin (valid partition)", "password = admin123 (valid partition)"] })
+declare_step({ caseId: "TC-001", steps: [
+  { verb: "fill",    targetHint: "username input field",  data: "admin" },
+  { verb: "fill",    targetHint: "password input field",  data: "admin123" },
+  { verb: "click",   targetHint: "Sign in button" },
+  { verb: "waitFor", targetHint: "auth API response", expectation: { kind: "network", method: "POST", urlPattern: "/aut-api/auth/login", value: "200" } },
+  { verb: "verify",  targetHint: "browser page",          expectation: { kind: "url", value: "/dashboard" } },
+  { verb: "verify",  targetHint: "dashboard greeting",    expectation: { kind: "text-visible", value: "Welcome back, Admin!" } }
+] })
+
+declare_case({ id: "TC-002", title: "Reject login with invalid password format", conditionId: "C-001", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-001"], referencedComponentConditions: [], priority: "high", category: "error", testLevel: "component", techniqueApplied: "Equivalence Partitioning", preconditions: ["User is on the login page"], testData: ["password = weakpass123 (invalid partition)"] })
+declare_step({ caseId: "TC-002", steps: [
+  { verb: "fill",   targetHint: "username input field", data: "admin" },
+  { verb: "fill",   targetHint: "password input field", data: "weakpass123" },
+  { verb: "click",  targetHint: "Sign in button" },
+  { verb: "verify", targetHint: "browser page",         expectation: { kind: "url", value: "/login" } }
+] })
+\`\`\`
+
+**Notes:**
+- Stream your design rationale in plain text BEFORE the first tool call.
+- After ALL \`declare_*\` calls and ReAct exit, the system assembles the final \`draftTestCases\` JSON automatically — do NOT emit a \`\`\`json\`\`\` block in Mode A.
+- Mode B: every \`action\` first word MUST be a vocabulary verb; every \`fill\` MUST carry \`intent.data\`; every \`verify\` MUST carry \`intent.expectation\`. The system repairs common slips deterministically, but the schema still rejects what it cannot repair.
 ${buildTechniqueFewShot(state)}
 **Rules:**
-- The \`\`\`json block must be at the very end of your response — nothing after it.
-- The block must contain COMPLETE data: ALL draft test cases, not a sample.
-- The \`draftTestCases\` array MUST contain at least one test case.
-- An empty object \`{}\` is always invalid.
-- **\`testData\` must be flat strings** — no nested arrays or objects.
-- **\`testLevel\` must be lowercase** \`"component"\` or \`"integration"\`.
-- **\`coveredConditions\` must be non-empty** — at minimum \`[conditionId]\`.
-- **\`referencedComponentConditions\` (integration only) must use real IDs from the input** — plain condition IDs (e.g. \`C-001\`) or verbatim \`referenceId\` from \`availableComponentConditions\`. Never fabricate IDs.
+- **PICK ONE MODE; never mix.** A partial tool declaration (some cases as tools, others as JSON) is rejected as Mode A incompleteness.
+- Mode A: EVERY case and step is a \`declare_case\`/\`declare_step\` call; no JSON block; exit only after the last step. Prefer ONE \`declare_step\` per case carrying its full \`steps\` array.
+- Mode B: one complete \`\`\`json\`\`\` block, ALL cases, at the very end; zero \`declare_\` calls.
+- All design constraints apply in both modes (testData flat, testLevel lowercase, coveredConditions non-empty, referencedComponentConditions real IDs, step atomicity, no semicolons in expected) — see **designer_rules** for details.
 
-Final check before closing the block: every testData entry states its partition/boundary; every case's preconditions are self-contained; every case declares \`testLevel\` as \`"component"\` or \`"integration"\` AND the step design honors that level (integration cases traverse 2+ components, component cases stay within one); **integration cases do NOT re-assert what a sibling component case already covers** (move atomic behavior into preconditions, assert only the cross-component outcome).
+Final check before exiting ReAct: every testData entry states its partition/boundary; preconditions self-contained; \`testLevel\` = \`"component"\`/\`"integration"\` AND honored in step design; **integration cases do NOT re-assert what a sibling component case covers**.
 `;
 }
 
@@ -788,10 +765,10 @@ export function buildDesignerUserMessage(
       condition: c.condition,
       // F1: surface the new conditionType to the Designer so it can decide
       // coveredConditions vs referencedComponentConditions correctly.
-      conditionType: (c as any).conditionType,
+      conditionType: c.conditionType,
       // F3: when conditionType is "flow", include the step refs so the
       // Designer can write steps that mirror the actual flow sequence.
-      flowStepRefs: (c as any).flowStepRefs ?? [],
+      flowStepRefs: c.flowStepRefs ?? [],
       priority: c.priority,
       category: c.category,
       primaryTechnique: c.primaryTechnique,
@@ -801,7 +778,7 @@ export function buildDesignerUserMessage(
       coverageDimensions: c.coverageDimensions,
       // Pass Analyst's dataRequirements to Designer so it can reuse
       // partition/boundary annotations instead of re-deriving them.
-      dataRequirements: (c as any).dataRequirements,
+      dataRequirements: c.dataRequirements,
     })),
     // F7: full flow context (same shape as the Analyst receives). The
     // Designer needs the actionSummary and requirementIds to write steps
@@ -830,15 +807,19 @@ function buildDefaultQualitySystemPrompt(state: TestGenState): string {
 ## Read the conditions first (F14)
 For every draft case in the input, you will see \`coveredConditions\` (the Analyst condition ids the case claims to cover) and, for integration cases, \`referencedComponentConditions\` (the component conditions the case assumes as preconditions). **Before you judge a case's correctness, you MUST look up the actual condition text for each id in those arrays** (the Analyst's conditions are exposed in the user message's \`conditions\` field). A case that "looks right" but is silently testing a different behavior than the condition says is a defect.
 
+## Draft case input is a SUMMARY — pull full text before ANY output
+Your input's \`draftCases\` entries are compact summaries (\`stepCount\` + truncated \`stepActions\`), NOT the full step text. You MUST call **draft_case_detail_query** to retrieve a case's full \`steps\`/\`preconditions\`/\`testData\`/\`intent\` before writing its \`finalTestCase\` entry — EVEN for cases you approve unchanged. The schema requires \`intent\` to be preserved **verbatim** from the draft (see "step intent" below); you cannot copy what you have not pulled. Prefer one batch call: \`draft_case_detail_query(["TC-001", "TC-002", ...])\` for all case ids at the start of your review.
+
 ## Load Detailed Rules (MANDATORY)
 Call **quality_rules** to load the complete review dimensions, discipline rules, and coverage matrix format. You MUST load these before reviewing any cases.
 ${buildContextSection(state, 'quality')}## Detailed Rules (MANDATORY — load before reviewing)
-Call **quality_rules** to load the complete review rules (9 review dimensions, review discipline, coverage matrix F27, F17 redundancy, D2 cross-batch redundancy). You MUST call this before reviewing any cases.
+Call **quality_rules** before reviewing any cases (9 review dimensions, coverage matrix F27, F17/D2 redundancy).
 
 ## Available Tools
 - **requirement_detail_query**: verify requirement details when judging Correctness.
 - **flow_detail_query(flowId)**: load flow step details — use to verify integration test cases against actual flow steps (Correctness dimension).
 - **previous_batch_cases_query**: query previous batch final test cases — use for D2 cross-batch redundancy check (compare titles, testLevel, conditionId against current batch cases).
+- **draft_case_detail_query(caseId)**: pull a draft case's FULL text (all steps, preconditions, testData, intent, tags). REQUIRED before writing ANY finalTestCase entry — even approved/unchanged cases — so \`intent\` is preserved verbatim. Also required before judging F17 redundancy, step atomicity, or making any field-level change. Supports batch: pass an array of case ids to pull all at once.
 - **istqb_guide(techniques?, context?)**: load ISTQB technique guides for reference when judging Technique Fidelity.
 - **quality_rules**: load detailed review rules (9 dimensions, F17, D2, coverage matrix F27). Call before reviewing.
 
@@ -846,7 +827,7 @@ Call **quality_rules** to load the complete review rules (9 review dimensions, r
 These constraints are enforced by the Zod schema at parse time. Violations cause Phase 2 retries and may fail the entire pipeline after 3 attempts.
 
 ### testLevel — MUST NOT change
-You MUST NOT change the \`testLevel\` of any draft case. If the Designer assigned \`"integration"\`, the final case MUST remain \`"integration"\`. If the Designer assigned \`"component"\`, it MUST remain \`"component"\`. The schema will REJECT any case where \`testLevel\` differs from the Designer's assignment.
+You MUST NOT change the \`testLevel\` of any draft case, and it must stay lowercase: \`"component"\` or \`"integration"\`. The schema will REJECT any other value.
 
 ### finalTestCases — MUST include every draft case
 Every draft case ID in the input MUST appear in \`finalTestCases\`. If you want to reject a case, set its \`status\` to \`"rejected"\` and explain in \`reviewSummary\` — but do NOT omit it from the output. Missing cases will be auto-added as rejected with a warning, which wastes a Phase 2 retry.
@@ -871,14 +852,11 @@ RIGHT (split into two steps):
 
 **Rule: if your \`expected\` value contains a semicolon, it is WRONG. Always split.**
 
-### testLevel values
-\`testLevel\` must be exactly \`"component"\` or \`"integration"\` — **lowercase only**.
-
 ### coveredConditions and referencedComponentConditions
 Preserve these from the draft cases. Do NOT empty them. If a draft case had \`coveredConditions: ["C-001"]\`, the final case must also have \`coveredConditions: ["C-001"]\` (or a superset).
 
 ### step intent — MUST preserve verbatim
-Every draft step carries an \`intent\` object (\`targetHint\`/\`data\`/\`expectation\` — the action verb lives in the \`action\` text first word). Copy the \`intent\` **unchanged** into \`finalTestCases\` — do NOT rewrite, re-enum, or drop it. If missing, leave it missing (the recorder falls back to inference); do NOT invent one.
+Every draft step carries an \`intent\` object (\`targetHint\`/\`data\`/\`expectation\` — the action verb lives in the \`action\` text first word). Copy the \`intent\` **unchanged** into \`finalTestCases\` — do NOT rewrite, re-enum, or drop it. If missing, leave it missing (the recorder falls back to inference); do NOT invent one. You MUST have pulled the draft case via \`draft_case_detail_query\` before writing its finalTestCase — copying from memory corrupts \`intent\`.
 
 ${state.humanReviewFeedback ? `## Reviewer Feedback\n${state.humanReviewFeedback}` : ''}
 
@@ -940,14 +918,9 @@ End with a single JSON code block containing the COMPLETE output. Nothing after 
       ],
       "tags": ["boundary", "validation", "order", "component"],
       "status": "approved_with_changes",
-      "reviewSummary": "Data Validity: original draft data ('quantity = small number') named no concrete boundary. Corrected to the explicit one-below-minimum value to satisfy BVA. testLevel=component preserved correctly — assertions stay within the order form UI.",
+      "reviewSummary": "Data Validity: corrected 'quantity = small number' to the exact one-below-minimum value to satisfy BVA. testLevel=component preserved.",
       "changeLog": [
-        {
-          "field": "testData",
-          "from": "quantity = small number",
-          "to": "quantity = 0 (one below minimum 1)",
-          "reason": "Original value did not identify a concrete boundary; BVA requires the exact boundary value and its position relative to the limit."
-        }
+        { "field": "testData", "from": "quantity = small number", "to": "quantity = 0 (one below minimum 1)", "reason": "BVA requires the exact boundary value." }
       ]
     }
   ],
@@ -994,13 +967,11 @@ End with a single JSON code block containing the COMPLETE output. Nothing after 
 
 **Rules:**
 - The \`\`\`json block is the last thing in your response — nothing after it.
-- It must contain ALL final test cases, complete — never a sample. \`finalTestCases.length >= 1\`. An empty object \`{}\` is always invalid.
-- **Every draft case ID from the input MUST appear in \`finalTestCases\`** — rejected cases must have \`status: "rejected"\` and a \`reviewSummary\` explaining why, but must NOT be omitted.
-- **You MUST NOT change \`testLevel\`** — preserve the Designer's assignment exactly.
-- **\`testData\` must be flat strings** — no nested arrays or objects.
-- **\`expected\` must not contain semicolons** — split semicolon-joined assertions into separate steps.
-- Every modified case has a non-empty, field-level \`changeLog\`; every untouched case has \`changeLog: []\`.
-- The \`coverageMatrix\` MUST be present. Every Analyst \`conditionId\` that appears in the input draft cases MUST have exactly one row in \`coverageMatrix.rows\`. \`coveredByCaseIds\` must reference real \`finalTestCases\` ids. The summary \`byConditionType\` field is required.
+- It must contain ALL final test cases, complete — never a sample. An empty object \`{}\` is always invalid.
+- Every draft case ID MUST appear in \`finalTestCases\` (rejected cases keep \`status: "rejected"\` + a \`reviewSummary\`; never omitted).
+- MUST NOT change \`testLevel\`; \`testData\` flat; \`expected\` semicolon-free.
+- Modified cases have a field-level \`changeLog\`; untouched cases have \`changeLog: []\`.
+- \`coverageMatrix\` MUST be present: one row per input Analyst conditionId, \`coveredByCaseIds\` referencing real final ids, summary \`byConditionType\` required.
 `;
 }
 
@@ -1009,22 +980,24 @@ export function buildQualityUserMessage(state: TestGenState): string {
   const conditions = state.approvedConditions ?? state.testConditions ?? [];
   const flows = state.relevantFlowBlueprints ?? state.businessFlowBlueprints ?? [];
   return JSON.stringify({
+    // B1 input-side: compact per-case summary — do NOT re-serialize the
+    // Designer's steps/preconditions/testData/tags/selfReview text verbatim
+    // (token bloat). Each case carries a stepCount + truncated action hints
+    // enough for a first-pass scan; pull full text via draft_case_detail_query
+    // when a correctness/F17-redundancy/atomicity review needs exact wording.
     draftCases: draftCases.map(c => ({
       id: c.id,
       title: c.title,
       conditionId: c.conditionId,
       requirementId: c.requirementId,
-      coveredConditions: (c as any).coveredConditions ?? [],
-      referencedComponentConditions: (c as any).referencedComponentConditions ?? [],
+      coveredConditions: c.coveredConditions ?? [],
+      referencedComponentConditions: c.referencedComponentConditions ?? [],
       priority: c.priority,
       category: c.category,
       testLevel: c.testLevel,
       techniqueApplied: c.techniqueApplied,
-      preconditions: c.preconditions,
-      testData: c.testData,
-      steps: c.steps,
-      selfReview: (c as any).selfReview,
-      tags: c.tags,
+      stepCount: (c.steps ?? []).length,
+      stepActions: (c.steps ?? []).map((s: any) => String(s.action ?? '').slice(0, 120)),
     })),
     // F14: give the reviewer the actual condition text so they can verify
     // coveredConditions fidelity (without this, "read the condition first"
@@ -1033,13 +1006,15 @@ export function buildQualityUserMessage(state: TestGenState): string {
       id: c.id,
       requirementId: c.requirementId,
       condition: c.condition,
-      conditionType: (c as any).conditionType,
-      flowStepRefs: (c as any).flowStepRefs ?? [],
+      conditionType: c.conditionType,
+      flowStepRefs: c.flowStepRefs ?? [],
       primaryTechnique: c.primaryTechnique,
       category: c.category,
     })),
-    // F8 / F27: flow context so the reviewer can verify flow-step coverage.
-    businessFlows: flows.map(serializeFlowForDesigner),
+    // F8 / F27: compact flow context (identity + step sequence) so the
+    // reviewer can verify flow-step coverage/traceability without paying for
+    // full step text — pull details via flow_detail_query when inspecting.
+    businessFlows: flows.map(serializeFlowForQuality),
     requirements: state.currentBatch?.map(r => ({
       id: r.id,
       title: r.title,

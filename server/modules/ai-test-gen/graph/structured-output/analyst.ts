@@ -5,42 +5,18 @@ import {
   nullToEmptyArray,
   nullToUndefined,
 } from './helpers.ts';
+import { testConditionContractSchema } from 'shared/recording/agent-contracts.ts';
 import type { StructuredOutputProfile } from './profile.ts';
 import { Log } from '../../../../shared/services/logger.ts';
-
-const FlowStepRefSchema = z.object({
-  flowId: z.string().min(1),
-  flowName: z.string().optional(),
-  sequence: z.number().int().nonnegative(),
-  actionSummary: z.string().min(1),
-});
 
 const AnalystRuntimeSchema = z.object({
   requirementAnalysis: z.object({
     overallApproach: z.string(),
     riskAssessmentSummary: z.string(),
   }),
-  testConditions: z.array(z.object({
-    id: z.string(),
-    requirementId: z.string(),
-    condition: z.string(),
-    // Type discriminator — replaces the legacy "testLevel:component"/"testLevel:integration"
-    // string tag in coverageDimensions. Required.
-    conditionType: z.enum(['component', 'flow']),
-    // Required when conditionType === "flow". For "component" conditions, may be omitted.
-    flowStepRefs: z.array(FlowStepRefSchema).optional(),
-    category: z.string(),
-    priority: z.string(),
-    riskLevel: z.string(),
-    primaryTechnique: z.string(),
-    secondaryTechniques: z.array(z.string()),
-    techniqueRationale: z.string(),
-    coverageDimensions: z.array(z.string()),
-    dataRequirements: z.array(z.string()).optional(),
-    dependencies: z.array(z.string()).default([]),
-    requirementLevel: z.string().optional(),
-    recommendedCaseCount: z.number().int().positive().optional(),
-  })),
+  // SSOT：TestCondition 字段结构取自 shared/recording/agent-contracts.ts。
+  // 业务门（conditionType/flowStepRefs/requirementId/dependencies 交叉校验）在 parse 阶段叠加。
+  testConditions: z.array(testConditionContractSchema),
 });
 
 type AnalystRuntimeOutput = z.infer<typeof AnalystRuntimeSchema>;

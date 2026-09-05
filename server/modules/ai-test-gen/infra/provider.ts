@@ -1,4 +1,4 @@
-import OpenAI, { APIError } from 'openai';
+import OpenAI, { APIError, APIConnectionError, APIConnectionTimeoutError } from 'openai';
 import { Log } from '../../../shared/services/logger.ts';
 
 export type ProviderConfig =
@@ -49,6 +49,8 @@ export interface ChatOptions {
   responseFormat?: 'json_object' | 'text';
   jsonSchema?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** 节点级超时（毫秒），仅用于错误消息定位，provider 不消费。 */
+  timeoutMs?: number;
   agentName?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
   reasoningSummary?: 'auto' | 'detailed' | 'concise';
@@ -80,7 +82,7 @@ export interface StreamChunk {
   content?: string;
   toolCall?: ToolCall;
   toolResult?: unknown;
-  usage?: { promptTokens: number; completionTokens: number; reasoningTokens?: number };
+  usage?: { promptTokens: number; completionTokens: number; reasoningTokens?: number; cachedPromptTokens?: number };
   /**
    * Native finish reason from the provider. Normalized to 'length' when output
    * was truncated (Chat Completions finish_reason='length'; Responses API
@@ -167,6 +169,55 @@ function formatSdkError(err: unknown, providerName: string, agentTag: string, ex
   return err instanceof Error ? err : new Error(String(err));
 }
 
+/** 短暂睡眠（指数退避等待）；unref 避免阻塞进程退出 */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    t.unref?.();
+  });
+}
+
+/**
+ * 发起流式请求时对"超时类连接错误"（APIConnectionTimeoutError，即
+ * "Request timed out."）做有限次指数退避重试（默认 2 次：2s、4s）。
+ *
+ * 为什么需要：OpenAI SDK 内置重试（maxRetries）会处理 429/408/409/5xx 与普通
+ * 连接错误，但对 timeout 类默认不重试——实测 Azure Responses 会在长推理/无
+ * 增量流上抛出 "Request timed out."，直接让整个 agent 失败。这里只在
+ * **stream 首字节之前**失败时重试（调用 action 会重新发起请求）；一旦开始
+ * 读取 chunk，中断不再重试，避免放大重复消费。
+ */
+async function createStreamWithRetry<T>(
+  action: () => Promise<T>,
+  opts: { signal?: AbortSignal; label: string; retries?: number },
+): Promise<T> {
+  const max = opts.retries ?? 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= max; attempt++) {
+    try {
+      return await action();
+    } catch (err) {
+      lastErr = err;
+      const isTimeout = err instanceof APIConnectionTimeoutError;
+      const isConn = err instanceof APIConnectionError;
+      // 429 限流需要比连接错误更长的等待（Mistral 等配额型接口常返回
+      // "429 status code (no body)" 且无 Retry-After 头，SDK 短退避不够）
+      const isRateLimited = err instanceof APIError && (err.status === 429 || err.status === 503);
+      if (attempt === max || !(isTimeout || isConn || isRateLimited)) throw err;
+      if (opts.signal?.aborted) throw err;
+      // 429/503：5s → 10s → 20s；超时/连接：2s → 4s → 8s
+      const base = isRateLimited ? 5_000 : 2_000;
+      const delayMs = base * 2 ** attempt;
+      Log.for('provider').warn(
+        `[${opts.label}] stream create failed ${err instanceof Error ? `(${err.message})` : ''} — retry ${attempt + 1}/${max} in ${delayMs}ms`,
+      );
+      await delay(delayMs);
+      if (opts.signal?.aborted) throw err;
+    }
+  }
+  throw lastErr;
+}
+
 // ─── Token limit ladder ───
 // Many OpenAI-compatible endpoints reject max_tokens above the model's context
 // cap. Try 1M → 500k → 200k → 120k → 60k, downgrading on rejection.
@@ -200,7 +251,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
     defaultQuery: { 'api-version': config.apiVersion },
     defaultHeaders: { 'api-key': config.apiKey },
     dangerouslyAllowBrowser: true,
-    maxRetries: 0,
+    maxRetries: 2,
   });
 
   function buildInput(messages: ChatMessage[]): unknown[] {
@@ -264,26 +315,29 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
     for (let i = 0; i < tokenLadder.length; i++) {
       const maxTok = tokenLadder[i];
       try {
-        stream = await client.responses.create({
-        model: config.deployment,
-        input: input as any,
-        max_output_tokens: maxTok,
-        reasoning: { effort: reasoningEffort, summary: reasoningSummary },
-        stream: true,
-        text: { ...(buildTextConfig(options) ?? {}), verbosity: textVerbosity } as any,
-        ...(() => {
-          if (!options?.tools?.length) return {};
-          return {
-            tools: options.tools.map(t => ({
-              type: 'function' as const,
-              name: t.name,
-              description: t.description,
-              strict: t.strict ?? false,
-              parameters: t.parameters as any,
-            })),
-          };
-        })(),
-      }, { signal });
+        stream = await createStreamWithRetry(
+          () => client.responses.create({
+            model: config.deployment,
+            input: input as any,
+            max_output_tokens: maxTok,
+            reasoning: { effort: reasoningEffort, summary: reasoningSummary },
+            stream: true,
+            text: { ...(buildTextConfig(options) ?? {}), verbosity: textVerbosity } as any,
+            ...(() => {
+              if (!options?.tools?.length) return {};
+              return {
+                tools: options.tools.map(t => ({
+                  type: 'function' as const,
+                  name: t.name,
+                  description: t.description,
+                  strict: t.strict ?? false,
+                  parameters: t.parameters as any,
+                })),
+              };
+            })(),
+          }, { signal }),
+          { signal, label: 'azure-sdk' },
+        );
         usedMax = maxTok;
         cachedMaxTokens = usedMax;
         break;
@@ -379,6 +433,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
         promptTokens: usageData.input_tokens ?? 0,
         completionTokens: usageData.output_tokens ?? 0,
         reasoningTokens: usageData.output_tokens_details?.reasoning_tokens ?? 0,
+        cachedPromptTokens: usageData?.input_tokens_details?.cached_tokens ?? 0,
       } : undefined,
     };
   }
@@ -394,7 +449,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
     apiKey: config.apiKey,
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
-    maxRetries: 0,
+    maxRetries: 2,
   });
 
   function serializeMessages(messages: ChatMessage[]): unknown[] {
@@ -465,19 +520,22 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
     for (let i = 0; i < tokenLadder.length; i++) {
       const maxTok = tokenLadder[i];
       try {
-        stream = await client.chat.completions.create({
-          ...({
-            model: config.model!,
-            messages: serializeMessages(messages),
-            temperature: options?.temperature ?? 0.3,
-            max_tokens: maxTok,
-            stream_options: { include_usage: true },
-            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-            ...buildTools(options),
-          } as any),
-          stream: true,
-          response_format: buildResponseFormat(options) as any,
-        }, { signal });
+        stream = await createStreamWithRetry(
+          () => client.chat.completions.create({
+            ...({
+              model: config.model!,
+              messages: serializeMessages(messages),
+              temperature: options?.temperature ?? 0.3,
+              max_tokens: maxTok,
+              stream_options: { include_usage: true },
+              ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              ...buildTools(options),
+            } as any),
+            stream: true,
+            response_format: buildResponseFormat(options) as any,
+          }, { signal }),
+          { signal, label: 'openai-compat-sdk' },
+        );
         usedMax = maxTok;
         cachedMaxTokens = usedMax;
         break;
@@ -559,6 +617,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
         promptTokens: usageData.prompt_tokens ?? 0,
         completionTokens: usageData.completion_tokens ?? 0,
         reasoningTokens: (usageData as any)?.completion_tokens_details?.reasoning_tokens ?? 0,
+        cachedPromptTokens: (usageData as any)?.prompt_tokens_details?.cached_tokens ?? 0,
       } : undefined,
     };
   }
@@ -572,7 +631,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
     apiKey: config.apiKey,
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
-    maxRetries: 0,
+    maxRetries: 2,
   });
 
   function buildInput(messages: ChatMessage[]): unknown[] {
@@ -636,26 +695,29 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
     for (let i = 0; i < tokenLadder.length; i++) {
       const maxTok = tokenLadder[i];
       try {
-        stream = await client.responses.create({
-        model: config.model,
-        input: input as any,
-        max_output_tokens: maxTok,
-        reasoning: { effort: reasoningEffort, summary: reasoningSummary },
-        stream: true,
-        text: { ...(buildTextConfig(options) ?? {}), verbosity: textVerbosity } as any,
-        ...(() => {
-          if (!options?.tools?.length) return {};
-          return {
-            tools: options.tools.map(t => ({
-              type: 'function' as const,
-              name: t.name,
-              description: t.description,
-              strict: t.strict ?? false,
-              parameters: t.parameters as any,
-            })),
-          };
-        })(),
-      }, { signal });
+        stream = await createStreamWithRetry(
+          () => client.responses.create({
+            model: config.model,
+            input: input as any,
+            max_output_tokens: maxTok,
+            reasoning: { effort: reasoningEffort, summary: reasoningSummary },
+            stream: true,
+            text: { ...(buildTextConfig(options) ?? {}), verbosity: textVerbosity } as any,
+            ...(() => {
+              if (!options?.tools?.length) return {};
+              return {
+                tools: options.tools.map(t => ({
+                  type: 'function' as const,
+                  name: t.name,
+                  description: t.description,
+                  strict: t.strict ?? false,
+                  parameters: t.parameters as any,
+                })),
+              };
+            })(),
+          }, { signal }),
+          { signal, label: 'openai-responses' },
+        );
         usedMax = maxTok;
         cachedMaxTokens = usedMax;
         break;
@@ -751,6 +813,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
         promptTokens: usageData.input_tokens ?? 0,
         completionTokens: usageData.output_tokens ?? 0,
         reasoningTokens: usageData.output_tokens_details?.reasoning_tokens ?? 0,
+        cachedPromptTokens: usageData?.input_tokens_details?.cached_tokens ?? 0,
       } : undefined,
     };
   }

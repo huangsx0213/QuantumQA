@@ -1,3 +1,20 @@
+import { z } from 'zod';
+
+/**
+ * Coerce any value to a string. Handles the LLM's common mistakes:
+ * - nested arrays: ["a", "b"] → "a, b"
+ * - objects: {key: "val"} → '{"key":"val"}'
+ * - numbers/booleans: 123 → "123"
+ * This is a schema-level coercion, not a post-hoc auto-fix.
+ */
+export const coercedStringSchema = z.preprocess((v) => {
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) return v.join(', ');
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}, z.string());
+
 export function nullToUndefined<T>(value: T | null | undefined): T | undefined {
   return value == null ? undefined : value;
 }

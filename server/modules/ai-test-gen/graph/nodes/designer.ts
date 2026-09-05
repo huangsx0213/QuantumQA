@@ -2,9 +2,10 @@ import type { TestGenState } from '../state';
 import type { AgentObserver, SkillDefinition } from './types';
 import type { AIProvider } from '../../infra/provider.ts';
 import { mergeSignals } from '../../infra/provider.ts';
-import { callLLMWithStructuredOutput } from './utils';
+import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
 import { buildDesignerSystemPrompt, buildDesignerUserMessage, type ComponentConditionReference } from '../prompts';
 import { buildDesignerSkills } from '../skills/skills.ts';
+import { loadComponentConditionsFromLogs } from '../skills/data-skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createDesignerOutputProfile } from '../structured-output/designer.ts';
 import type { DraftTestCaseContract } from '../../../../../shared/recording/agent-contracts.ts';
@@ -72,17 +73,14 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
           }
         } else {
           // Flow mode: load component conditions from previous batch logs
-          for (const logEntry of pipelineRepo.getAgentLogs(state.runId, 'test_analyst')) {
-            for (const condition of logEntry.output_data?.testConditions ?? []) {
-              if (condition.conditionType !== 'component') continue;
-              const referenceId = `component:${condition.requirementId}:${condition.id}`;
-              availableComponentConditions.set(referenceId, {
-                referenceId,
-                conditionId: condition.id,
-                requirementId: condition.requirementId,
-                condition: condition.condition,
-              });
-            }
+          for (const condition of loadComponentConditionsFromLogs(state.runId)) {
+            const referenceId = `component:${condition.requirementId}:${condition.id}`;
+            availableComponentConditions.set(referenceId, {
+              referenceId,
+              conditionId: condition.id,
+              requirementId: condition.requirementId,
+              condition: condition.condition,
+            });
           }
         }
       }
@@ -145,15 +143,8 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       observer?.onComplete?.(agentName, usage, latencyMs, messages, validated);
 
       return {
-        draftTestCases: validated.draftTestCases as DraftTestCaseContract[],
-        skillCalls: (toolCallRecords ?? []).map(tc => ({
-          agent: agentName,
-          skillName: tc.name,
-          input: tc.input,
-          output: tc.output,
-          latencyMs: tc.latencyMs,
-          timestamp: Date.now(),
-        })),
+draftTestCases: validated.draftTestCases as DraftTestCaseContract[],
+        skillCalls: toSkillCallRecords(agentName, toolCallRecords),
         phase: 'review-draft' as const,
       };
     } catch (err: any) {

@@ -8,6 +8,7 @@ import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
   coerceNumber,
+  coercedStringSchema,
   formatZodValidationError,
   normalizeAtomicExpected,
   normalizeNlStepIntent,
@@ -17,21 +18,6 @@ import {
 } from './helpers.ts';
 import type { StructuredOutputProfile } from './profile.ts';
 import { Log } from '../../../../shared/services/logger.ts';
-
-/**
- * Coerce any value to a string. Handles the LLM's common mistakes:
- * - nested arrays: ["a", "b"] → "a, b"
- * - objects: {key: "val"} → '{"key":"val"}'
- * - numbers/booleans: 123 → "123"
- * This is a schema-level coercion, not a post-hoc auto-fix.
- */
-const coercedString = z.preprocess((v) => {
-  if (typeof v === 'string') return v;
-  if (Array.isArray(v)) return v.join(', ');
-  if (v === null || v === undefined) return '';
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
-}, z.string());
 
 // F19: step atomicity hard constraint — keep `expected` to a single observable
 // outcome. Bundled assertions (containing ";" + conjunction, or > 200 chars) are
@@ -51,7 +37,7 @@ const atomicExpected = (value: string): true | string => {
 
 const QualityCaseSchema = z.object({
   ...finalTestCaseContractSchema.shape,
-  testData: z.array(coercedString),
+  testData: z.array(coercedStringSchema),
   steps: z.array(z.object({
     stepNumber: z.number(),
     action: z.string(),

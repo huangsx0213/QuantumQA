@@ -68,7 +68,7 @@ export function buildTestGenGraph(opts: BuildGraphOptions) {
     .addNode('designer', designerNode)
     .addNode('checkpoint_2', checkpoint2, { ends: ['designer', 'quality'] })
     .addNode('quality', qualityNode)
-    .addNode('checkpoint_3', checkpoint3, { ends: ['quality', 'designer', 'complete'] })
+    .addNode('checkpoint_3', checkpoint3, { ends: ['quality', 'complete'] })
     .addNode('complete', completeNode);
 
   graph.addEdge(START, 'preparation');

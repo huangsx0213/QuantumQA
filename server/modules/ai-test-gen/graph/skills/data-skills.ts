@@ -37,6 +37,30 @@ export function clearQueryCache(): void {
   flowDetailCache.clear();
 }
 
+export interface ComponentConditionLike {
+  id: string;
+  requirementId: string;
+  condition: string;
+  conditionType: string;
+}
+
+/**
+ * Load the component conditions the Analyst produced in previous batches of the
+ * same run. This is the single source for cross-batch component-condition
+ * references — the Analyst uses it to validate `dependencies`, the Designer uses
+ * it to build `availableComponentConditions`. Avoids scanning the same logs twice.
+ */
+export function loadComponentConditionsFromLogs(runId: string): ComponentConditionLike[] {
+  const conditions: ComponentConditionLike[] = [];
+  for (const logEntry of pipelineRepo.getAgentLogs(runId, 'test_analyst')) {
+    for (const condition of logEntry.output_data?.testConditions ?? []) {
+      if (!condition || condition.conditionType !== 'component') continue;
+      conditions.push(condition);
+    }
+  }
+  return conditions;
+}
+
 // ============================================================
 // requirement_detail_query (supports single or batch)
 // Factory accepts optional batch context for graceful fallback

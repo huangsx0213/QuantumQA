@@ -4,7 +4,7 @@ import type { AIProvider } from '../../infra/provider.ts';
 import type { CoverageMatrix } from '../../../../../shared/contracts/index.ts';
 import type { FinalTestCaseContract } from '../../../../../shared/recording/agent-contracts.ts';
 import { mergeSignals } from '../../infra/provider.ts';
-import { callLLMWithStructuredOutput } from './utils';
+import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
 import { buildQualitySystemPrompt, buildQualityUserMessage } from '../prompts';
 import { buildQualitySkills } from '../skills/skills.ts';
 import { makeDraftCaseDetailQuery } from '../skills/data-skills.ts';
@@ -130,15 +130,8 @@ export function makeQualityNode(opts: QualityNodeOptions) {
 
       return {
         finalTestCases: validated.finalTestCases as FinalTestCaseContract[],
-        coverageMatrix: computedCoverageMatrix,
-        skillCalls: (toolCallRecords ?? []).map(tc => ({
-          agent: agentName,
-          skillName: tc.name,
-          input: tc.input,
-          output: tc.output,
-          latencyMs: tc.latencyMs,
-          timestamp: Date.now(),
-        })),
+coverageMatrix: computedCoverageMatrix,
+        skillCalls: toSkillCallRecords(agentName, toolCallRecords),
         phase: 'final-review' as const,
       };
     } catch (err: any) {

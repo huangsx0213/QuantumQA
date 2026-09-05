@@ -2,9 +2,10 @@ import type { TestGenState } from '../state';
 import type { AgentObserver, SkillDefinition } from './types';
 import type { AIProvider } from '../../infra/provider.ts';
 import { mergeSignals } from '../../infra/provider.ts';
-import { callLLMWithStructuredOutput } from './utils';
+import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
 import { buildAnalystSystemPrompt, buildAnalystUserMessage } from '../prompts';
 import { buildAnalystSkills } from '../skills/skills.ts';
+import { loadComponentConditionsFromLogs } from '../skills/data-skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createAnalystOutputProfile } from '../structured-output/analyst.ts';
 import { Log } from '../../../../shared/services/logger.ts';
@@ -88,11 +89,8 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       // related-requirement lookup.
       const externalConditionIds = new Set<string>();
       if (state.generationMode === 'flow') {
-        for (const logEntry of pipelineRepo.getAgentLogs(state.runId, 'test_analyst')) {
-          for (const condition of logEntry.output_data?.testConditions ?? []) {
-            if (condition.conditionType !== 'component') continue;
-            externalConditionIds.add(condition.id);
-          }
+        for (const condition of loadComponentConditionsFromLogs(state.runId)) {
+          externalConditionIds.add(condition.id);
         }
       }
       const analystOutputProfile = createAnalystOutputProfile(allowedReqIds, flowBlueprints as any, acParentMap, externalConditionIds);
@@ -133,14 +131,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       return {
         requirementAnalysis: validated.requirementAnalysis,
         testConditions: validated.testConditions,
-        skillCalls: (toolCallRecords ?? []).map(tc => ({
-          agent: agentName,
-          skillName: tc.name,
-          input: tc.input,
-          output: tc.output,
-          latencyMs: tc.latencyMs,
-          timestamp: Date.now(),
-        })),
+        skillCalls: toSkillCallRecords(agentName, toolCallRecords),
         phase: 'review-conditions' as const,
       };
     } catch (err: any) {

@@ -186,9 +186,6 @@ export class TestGenSession {
       tokenBudget: { estimated: 0, limit: null },
       skillCalls: [],
       humanReviewFeedback: '',
-      designerRetryCount: 0,
-      preservedCases: undefined,
-      allApprovedConditions: undefined,
     };
 
     const log = Log.for('session');

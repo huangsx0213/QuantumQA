@@ -5,6 +5,7 @@ import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
   coerceNumber,
+  coercedStringSchema,
   formatZodValidationError,
   normalizeNlStepIntent,
   normalizeTestLevel,
@@ -12,21 +13,6 @@ import {
   wrapSingleObjectInArray,
 } from './helpers.ts';
 import type { StructuredOutputProfile } from './profile.ts';
-
-/**
- * Coerce any value to a string. Handles the LLM's common mistakes:
- * - nested arrays: ["a", "b"] → "a, b"
- * - objects: {key: "val"} → '{"key":"val"}'
- * - numbers/booleans: 123 → "123"
- * This is a schema-level coercion, not a post-hoc auto-fix.
- */
-const coercedString = z.preprocess((v) => {
-  if (typeof v === 'string') return v;
-  if (Array.isArray(v)) return v.join(', ');
-  if (v === null || v === undefined) return '';
-  if (typeof v === 'object') return JSON.stringify(v);
-  return String(v);
-}, z.string());
 
 // ============================================================
 // DraftCase 步骤：from draftStepContractSchema + F18 本地 superRefine
@@ -111,7 +97,7 @@ const DesignerStepsSchema = z.array(DesignerStepSchema).min(1).superRefine((step
 // ============================================================
 const DesignerCaseSchema = z.object({
   ...draftTestCaseContractSchema.shape,
-  testData: z.array(coercedString),
+  testData: z.array(coercedStringSchema),
   steps: DesignerStepsSchema,
   selfReview: z.object({
     score: z.number().min(1).max(10),

@@ -173,13 +173,6 @@ export const TestGenStateAnnotation = Annotation.Root({
   finalTestCases: Annotation<FinalTestCaseContract[] | undefined>,
   coverageMatrix: Annotation<CoverageMatrixContract | undefined>,
 
-  // === Auto-repair: preserved cases + full condition list for incremental patch ===
-  // When checkpoint_3 routes back to Designer for missing coverage, these hold
-  // the already-reviewed cases and the full condition list so Designer only
-  // generates cases for the missing conditions, and checkpoint_2 merges them back.
-  preservedCases: Annotation<DraftTestCaseContract[] | undefined>,
-  allApprovedConditions: Annotation<TestConditionContract[] | undefined>,
-
   // === Generation Mode ===
   generationMode: Annotation<'component' | 'flow' | 'mixed'>,
   selectedFlowIds: Annotation<string[]>,
@@ -189,9 +182,6 @@ export const TestGenStateAnnotation = Annotation.Root({
 
   // === Review Feedback ===
   humanReviewFeedback: Annotation<string>,
-
-  // === Auto-repair loop counter (Quality → Designer retry for missing coverage) ===
-  designerRetryCount: Annotation<number>,
 
   // === Skill Call Records ===
   skillCalls: Annotation<SkillCallRecord[]>({

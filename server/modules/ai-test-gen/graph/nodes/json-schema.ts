@@ -24,6 +24,16 @@ function ensureStrictJsonSchema(schema: Record<string, unknown>): Record<string,
       }
     }
   }
+  // z.record() generates { type:'object', additionalProperties:{...} } with NO
+  // `properties`. Azure strict rejects this ("required key X supplied but not
+  // in properties") because it cannot express dynamic-key maps. Downgrade to
+  // an empty object schema — the field's value is recomputed in TS anyway
+  // (e.g. reconcileCoverageMatrix), so the model emitting {} is acceptable.
+  if (isObjectSchema && !schema.properties && schema.additionalProperties !== false && schema.additionalProperties !== undefined) {
+    schema.properties = {};
+    schema.required = [];
+    schema.additionalProperties = false;
+  }
   if (schema.items && typeof schema.items === 'object') {
     schema.items = ensureStrictJsonSchema(schema.items as Record<string, unknown>);
   }

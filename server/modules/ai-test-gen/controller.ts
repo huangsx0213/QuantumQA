@@ -228,7 +228,6 @@ export class TestGenController {
       crossEpicDependencies: undefined,
       previousBatchCoverageSummary: undefined,
       relevantFlowBlueprints: undefined,
-      flowReferencedComponentContext: undefined,
       environmentReady: true,
       initializationLogs: [],
       tokenBudget: { estimated: 0, limit: null },

@@ -404,6 +404,7 @@ const handleRefresh = useCallback(async () => {
             <div className="flex-1 overflow-hidden">
               <TestGenDetailPanel
                 runId={pipeline.runId}
+                projectId={currentProjectId}
                 node={pipeline.selectedNode as any ?? null}
                 agentLog={selectedAgentLog}
                 checkpointData={pipeline.checkpointData}

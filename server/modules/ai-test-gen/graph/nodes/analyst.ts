@@ -5,7 +5,7 @@ import { mergeSignals } from '../../infra/provider.ts';
 import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
 import { buildAnalystSystemPrompt, buildAnalystUserMessage } from '../prompts';
 import { buildAnalystSkills } from '../skills/skills.ts';
-import { loadComponentConditionsFromLogs } from '../skills/data-skills.ts';
+import { loadComponentConditions } from '../skills/data-skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createAnalystOutputProfile } from '../structured-output/analyst.ts';
 import { Log } from '../../../../shared/services/logger.ts';
@@ -89,7 +89,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       // related-requirement lookup.
       const externalConditionIds = new Set<string>();
       if (state.generationMode === 'flow') {
-        for (const condition of loadComponentConditionsFromLogs(state.runId)) {
+        for (const condition of loadComponentConditions(state.runId)) {
           externalConditionIds.add(condition.id);
         }
       }

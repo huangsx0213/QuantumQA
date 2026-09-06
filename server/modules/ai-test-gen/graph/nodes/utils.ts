@@ -449,6 +449,51 @@ async function runAgentReActLoop(
 }
 
 // ============================================================
+// Targeted schema repair — 定点修复，替代"整体重新生成"
+//
+// 业界（Anthropic/OpenAI structured outputs）靠 API 层 constrained decoding 从根上
+// 消灭 schema 违规。本项目 openai-compatible provider 因兼容性故意降级到 json_object
+//（无 schema 约束），所以 zod 后校验仍会失败。此时不要"贴完整 schema/错误列表 + 让
+// 模型从头重生成整个对象"，而是只把**出错字段的 path + 原因**反馈回去，让模型在
+// 上一份 JSON 上做最小改动——同时省 input token（精简反馈）与 output token（最小改动）。
+// ============================================================
+
+interface ZodIssueLike {
+  path?: Array<string | number>;
+  message?: string;
+}
+
+function extractRepairIssues(error: unknown, maxIssues = 8): string[] {
+  const issues = (error as { issues?: ZodIssueLike[] } | null | undefined)?.issues ?? [];
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const issue of issues) {
+    const path = (issue.path ?? []).join('.') || '(root)';
+    const message = issue.message ?? 'invalid value';
+    const key = `${path}:${message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`- ${path}: ${message}`);
+    if (lines.length >= maxIssues) break;
+  }
+  return lines;
+}
+
+function buildSchemaRepairFeedback(extractContent: string, schemaErr: unknown): ChatMessage[] {
+  const lines = extractRepairIssues(schemaErr);
+  const repairPrompt = [
+    'The JSON you produced is valid JSON, but it failed schema validation on these fields:',
+    ...lines,
+    '',
+    'Fix ONLY the fields listed above. Keep every other field and value exactly as you wrote them. Output the complete corrected JSON object with no text before or after it.',
+  ].join('\n');
+  return [
+    { role: 'assistant' as const, content: extractContent },
+    { role: 'user' as const, content: repairPrompt },
+  ];
+}
+
+// ============================================================
 // Main Entry: callLLMWithStructuredOutput
 // ============================================================
 
@@ -632,7 +677,7 @@ export async function callLLMWithStructuredOutput<T>(
     ];
   }
 
-  const MAX_PHASE2_RETRIES = 3;
+  const MAX_PHASE2_RETRIES = 2;
   let lastError: Error | null = null;
   const baseMessagesLength = extractionMessages.length;
   let lastErrorFeedback: ChatMessage[] | null = null;
@@ -697,10 +742,9 @@ export async function callLLMWithStructuredOutput<T>(
           (schemaErr as any).rawResponse = extractContent;
           lastError = schemaErr;
 
-          lastErrorFeedback = [
-            { role: 'assistant', content: extractContent },
-            { role: 'user', content: `Your JSON was valid, but schema validation failed: ${outputProfile.formatValidationError(schemaErr)} Please fix these errors and output the corrected JSON matching the schema exactly.` },
-          ];
+          // 定点修复：只反馈出错字段（path + 原因），让模型在上一份 JSON 上最小改动，
+          // 不再重发完整 schema/错误列表 + 整段重生成。
+          lastErrorFeedback = buildSchemaRepairFeedback(extractContent, schemaErr);
         }
       } else {
         const preview = extractContent.length > 500 ? `${extractContent.slice(0, 500)}...` : extractContent;

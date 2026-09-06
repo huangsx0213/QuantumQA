@@ -5,7 +5,7 @@ import { mergeSignals } from '../../infra/provider.ts';
 import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
 import { buildDesignerSystemPrompt, buildDesignerUserMessage, type ComponentConditionReference } from '../prompts';
 import { buildDesignerSkills } from '../skills/skills.ts';
-import { loadComponentConditionsFromLogs } from '../skills/data-skills.ts';
+import { loadComponentConditions } from '../skills/data-skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createDesignerOutputProfile } from '../structured-output/designer.ts';
 import type { DraftTestCaseContract } from '../../../../../shared/recording/agent-contracts.ts';
@@ -73,7 +73,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
           }
         } else {
           // Flow mode: load component conditions from previous batch logs
-          for (const condition of loadComponentConditionsFromLogs(state.runId)) {
+          for (const condition of loadComponentConditions(state.runId)) {
             const referenceId = `component:${condition.requirementId}:${condition.id}`;
             availableComponentConditions.set(referenceId, {
               referenceId,

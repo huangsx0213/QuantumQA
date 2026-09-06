@@ -26,7 +26,8 @@ import { checkpointer } from './graph/checkpointer.ts';
 import { buildTestGenGraph } from './graph/graph.ts';
 import { CHECKPOINT_BY_PHASE } from './graph/state.ts';
 import { buildAnalystInput } from './analyst-input-builder.ts';
-import type { GlobalEpicEntry, PreviousBatchCoverageSummary } from './graph/state.ts';
+import { CoverageIndex } from './coverage-index.ts';
+import type { GlobalEpicEntry } from './graph/state.ts';
 import { db } from '../../shared/db/client.ts';
 import {
   ConflictError,
@@ -62,64 +63,6 @@ function createDummyProvider(): AIProvider {
   };
 }
 
-/**
- * 把一个 test condition 合并到 accumulatedCoverage Map 中（按 requirementId 聚合）。
- * P2: 不再累积 conditionTitles，只增加 conditionCount；具体标题由 LLM 通过
- * previous_batch_conditions_query 按需查询，避免 token 随批次累积爆炸。
- */
-function mergeCoverage(
-  acc: Map<string, PreviousBatchCoverageSummary>,
-  tc: { id: string; condition: string; requirementId: string; category?: string; primaryTechnique?: string },
-): void {
-  const reqId = tc.requirementId;
-  const category = tc.category ?? 'functional';
-  const technique = tc.primaryTechnique ?? 'Unknown';
-  const existing = acc.get(reqId);
-  if (existing) {
-    existing.conditionCount += 1;
-    if (!existing.categories.includes(category)) existing.categories.push(category);
-    if (!existing.techniques.includes(technique)) existing.techniques.push(technique);
-  } else {
-    acc.set(reqId, {
-      requirementId: reqId,
-      conditionCount: 1,
-      categories: [category],
-      techniques: [technique],
-      caseCountByLevel: { component: 0, integration: 0 },
-    });
-  }
-}
-
-/**
- * 把一个 finalTestCase 合并到 accumulatedCoverage Map 中（按 requirementId 聚合）。
- * P2: 不再累积 caseTitles/caseLevels，改为按 testLevel 递增 caseCountByLevel 计数；
- * 具体标题由 LLM 通过 previous_batch_cases_query 按需查询。
- */
-function mergeCaseCoverage(
-  acc: Map<string, PreviousBatchCoverageSummary>,
-  tc: { title?: string; testLevel?: string; requirementId?: string },
-): void {
-  const reqId = tc.requirementId;
-  if (!reqId) return;
-  const level = (tc.testLevel ?? '').toLowerCase();
-  const isIntegration = level === 'integration';
-  const existing = acc.get(reqId);
-  if (existing) {
-    if (isIntegration) existing.caseCountByLevel.integration += 1;
-    else existing.caseCountByLevel.component += 1;
-  } else {
-    acc.set(reqId, {
-      requirementId: reqId,
-      conditionCount: 0,
-      categories: [],
-      techniques: [],
-      caseCountByLevel: {
-        component: isIntegration ? 0 : 1,
-        integration: isIntegration ? 1 : 0,
-      },
-    });
-  }
-}
 function buildGlobalEpicIndex(
   epics: any[],
   rootGroups: Map<string, string[]>,
@@ -204,7 +147,7 @@ interface BatchLoopParams {
   flowReferencedComponentContext: Map<string, any[]>;
   globalStats: { totalRequirements: number; totalEpics: number; totalFlows: number };
   globalEpicIndex: GlobalEpicEntry[];
-  accumulatedCoverage: Map<string, PreviousBatchCoverageSummary>;
+  accumulatedCoverage: CoverageIndex;
   startFrom: number;
   totalSubBatches: number;
   htmlKnowledgeReference?: HtmlKnowledgeReference;
@@ -628,7 +571,7 @@ export class Orchestrator {
       // 执行批次（累积 previousBatchCoverageSummary 给后续批次使用）
       const allResults: BatchResult[] = [];
       // L2 累积：按 requirementId 分组 of 覆盖摘要
-      const accumulatedCoverage = new Map<string, PreviousBatchCoverageSummary>();
+      const accumulatedCoverage = new CoverageIndex();
 
       // 如果指定了参考的其他 Runs，则从其历史中提取已生成的 test conditions 和 finalTestCases，避免生成重复用例
       if (params.referenceRunIds && params.referenceRunIds.length > 0) {
@@ -763,9 +706,9 @@ export class Orchestrator {
       try {
         const { coverage } = this.readRunStateCoverage(runId);
         const batchConditions: any[] = outcome.result.lastState?.testConditions ?? [];
-        for (const tc of batchConditions) mergeCoverage(coverage, tc);
+        for (const tc of batchConditions) coverage.addCondition(tc);
         const batchCases: any[] = outcome.result.lastState?.finalTestCases ?? [];
-        for (const tc of batchCases) mergeCaseCoverage(coverage, tc);
+        for (const tc of batchCases) coverage.addCase(tc);
         this.persistRunStateCoverage(runId, coverage);
       } catch (err: any) {
         Log.for('orchestrator').warn(`Failed to update serialized coverage state after resume: ${err.message}`);
@@ -937,7 +880,7 @@ export class Orchestrator {
 
       // Update state for the newly completed retried batch (P1.8)
       try {
-        let coverage = new Map<string, PreviousBatchCoverageSummary>();
+        let coverage: CoverageIndex = new CoverageIndex();
         let loadedFromArray = false;
         try {
           const stored = this.readRunStateCoverage(runId);
@@ -956,9 +899,9 @@ export class Orchestrator {
           );
         }
         const batchConditions: any[] = outcome.result.lastState?.testConditions ?? [];
-        for (const tc of batchConditions) mergeCoverage(coverage, tc);
+        for (const tc of batchConditions) coverage.addCondition(tc);
         const batchCases: any[] = outcome.result.lastState?.finalTestCases ?? [];
-        for (const tc of batchCases) mergeCaseCoverage(coverage, tc);
+        for (const tc of batchCases) coverage.addCase(tc);
         this.persistRunStateCoverage(runId, coverage);
       } catch (err: any) {
         Log.for('orchestrator').warn(`Failed to update serialized coverage state after retry: ${err.message}`);
@@ -1118,14 +1061,14 @@ export class Orchestrator {
     const globalEpicIndex = buildGlobalEpicIndex(epics, rootGroups, requirements, allFlowStories);
 
     // Load accumulated coverage from past agent logs
-    const accumulatedCoverage = new Map<string, PreviousBatchCoverageSummary>();
+    const accumulatedCoverage = new CoverageIndex();
     try {
       this.loadCoverageFromLogs(runId, accumulatedCoverage, currentBatch);
     } catch (e) {
       Log.for('orchestrator').warn(`Failed to load past coverage for retry: ${e}`);
     }
 
-    const previousBatchCoverageSummary = [...accumulatedCoverage.values()];
+    const previousBatchCoverageSummary = accumulatedCoverage.summaryList();
 
     const batchInput: BatchInput = {
       batchIndex: currentBatch - 1,
@@ -1137,9 +1080,6 @@ export class Orchestrator {
           'mixed', failedStoryIds, flowReferencedComponentContext,
           htmlKnowledge?.reference,
         ),
-        flowReferencedComponentContext: flowReferencedComponentContext.size > 0
-          ? Object.fromEntries(flowReferencedComponentContext)
-          : undefined,
         globalStats,
         globalEpicIndex,
         previousBatchCoverageSummary: previousBatchCoverageSummary.length > 0
@@ -1269,14 +1209,14 @@ export class Orchestrator {
 
     const allResults: BatchResult[] = [];
     // L2 累积：从已完成的 agent logs 加载，避免 resume 后跨批次防重复失效
-    const accumulatedCoverage = new Map<string, PreviousBatchCoverageSummary>();
+    let accumulatedCoverage = new CoverageIndex();
     
     // First, attempt to load from serialized storage (P1.8)
     let loadedFromState = false;
     try {
       const serialized = this.readRunStateCoverage(runId);
       if (serialized.loadedFromArray) {
-        for (const [key, value] of serialized.coverage) accumulatedCoverage.set(key, value);
+        accumulatedCoverage = serialized.coverage;
         Log.for('orchestrator').info(`Loaded ${accumulatedCoverage.size} coverage entries from serialized state for run ${runId}`);
         loadedFromState = true;
       }
@@ -1354,7 +1294,7 @@ export class Orchestrator {
           const threadId = `${params.runId}-batch-${epic.id}-mixed`;
           pipelineRepo.updateThreadId(params.runId, threadId);
 
-          const previousBatchCoverageSummary = [...params.accumulatedCoverage.values()];
+          const previousBatchCoverageSummary = params.accumulatedCoverage.summaryList();
 
           const batchInput: BatchInput = {
             batchIndex: batchCounter - 1,
@@ -1370,9 +1310,6 @@ export class Orchestrator {
               globalStats: params.globalStats,
               globalEpicIndex: params.globalEpicIndex,
               previousBatchCoverageSummary: previousBatchCoverageSummary.length > 0 ? previousBatchCoverageSummary : undefined,
-              flowReferencedComponentContext: params.flowReferencedComponentContext.size > 0
-                ? Object.fromEntries(params.flowReferencedComponentContext)
-                : undefined,
             },
           };
 
@@ -1388,12 +1325,12 @@ export class Orchestrator {
           // 累积本批次已生成的 conditions 摘要
           const batchConditions: any[] = outcome.result.lastState?.testConditions ?? [];
           for (const tc of batchConditions) {
-            mergeCoverage(params.accumulatedCoverage, tc);
+            params.accumulatedCoverage.addCondition(tc);
           }
           // 累积本批次已生成的 finalTestCases 标题+级别
           const batchCases: any[] = outcome.result.lastState?.finalTestCases ?? [];
           for (const tc of batchCases) {
-            mergeCaseCoverage(params.accumulatedCoverage, tc);
+            params.accumulatedCoverage.addCase(tc);
           }
 
           // Serialized storage for accumulatedCoverage (P1.8)
@@ -1419,7 +1356,7 @@ export class Orchestrator {
   /** 从已完成的 analyst / quality agent logs 中合并累积覆盖（跨批次、跨运行去重）。 */
   private loadCoverageFromLogs(
     runId: string,
-    coverage: Map<string, PreviousBatchCoverageSummary>,
+    coverage: CoverageIndex,
     beforeBatch?: number,
   ): void {
     const isEligible = (logEntry: any): boolean =>
@@ -1429,35 +1366,39 @@ export class Orchestrator {
     for (const logEntry of analystLogs.filter(isEligible)) {
       const tcs: any[] = logEntry.output_data?.testConditions ?? [];
       for (const tc of tcs) {
-        if (tc.id && tc.condition && tc.requirementId) mergeCoverage(coverage, tc);
+        if (tc.id && tc.condition && tc.requirementId) coverage.addCondition(tc);
       }
     }
     const qualityLogs = pipelineRepo.getAgentLogs(runId, 'quality_manager');
     for (const logEntry of qualityLogs.filter(isEligible)) {
       const cases: any[] = logEntry.output_data?.finalTestCases ?? [];
-      for (const tc of cases) mergeCaseCoverage(coverage, tc);
+      for (const tc of cases) coverage.addCase(tc);
     }
   }
 
   /** 读取序列化的累积覆盖（getRunState）。JSON 非法时抛错，由调用方 try/catch。 */
   private readRunStateCoverage(runId: string): {
-    coverage: Map<string, PreviousBatchCoverageSummary>;
+    coverage: CoverageIndex;
     statePresent: boolean;
     loadedFromArray: boolean;
   } {
-    const coverage = new Map<string, PreviousBatchCoverageSummary>();
+    const empty = new CoverageIndex();
     const stateStr = pipelineRepo.getRunState(runId);
-    if (!stateStr) return { coverage, statePresent: false, loadedFromArray: false };
+    if (!stateStr) return { coverage: empty, statePresent: false, loadedFromArray: false };
     const parsed = JSON.parse(stateStr);
     if (Array.isArray(parsed)) {
-      for (const [key, value] of parsed) coverage.set(key, value);
-      return { coverage, statePresent: true, loadedFromArray: true };
+      // 旧格式：仅摘要 entries 数组。
+      return { coverage: CoverageIndex.fromSummaryEntries(parsed), statePresent: true, loadedFromArray: true };
     }
-    return { coverage, statePresent: true, loadedFromArray: false };
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).summary)) {
+      // 新格式：CoverageIndex.serialize() 的结构化对象（摘要 + 明细）。
+      return { coverage: CoverageIndex.deserialize(parsed), statePresent: true, loadedFromArray: true };
+    }
+    return { coverage: empty, statePresent: true, loadedFromArray: false };
   }
 
-  private persistRunStateCoverage(runId: string, coverage: Map<string, PreviousBatchCoverageSummary>): void {
-    pipelineRepo.updateRunState(runId, JSON.stringify([...coverage.entries()]));
+  private persistRunStateCoverage(runId: string, coverage: CoverageIndex): void {
+    pipelineRepo.updateRunState(runId, JSON.stringify(coverage.serialize()));
   }
 
   private handleInterrupt(runId: string, ctx: RunContext, interrupt: InterruptInfo): void {

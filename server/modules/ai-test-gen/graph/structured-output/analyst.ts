@@ -291,7 +291,7 @@ export function createAnalystOutputProfile(
                 })
               : nullToUndefined(normalizedCondition.flowStepRefs as unknown[] | null | undefined);
 
-            return {
+return {
               ...normalizedCondition,
               conditionType,
               flowStepRefs,

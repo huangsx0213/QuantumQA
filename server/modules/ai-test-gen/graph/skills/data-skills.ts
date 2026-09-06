@@ -5,6 +5,7 @@ import { pipelineRepo } from '../../repository.ts';
 import type { SkillDefinition } from '../nodes/types.ts';
 import type { BatchRequirement } from '../state.ts';
 import { Log } from '../../../../shared/services/logger.ts';
+import { CoverageIndex, type IndexedComponentCondition } from '../../coverage-index.ts';
 
 // ============================================================
 // Query cache — prevents LLM from re-querying same IDs
@@ -18,7 +19,6 @@ export interface RequirementSkillRepository {
 
 export interface PreviousBatchSkillRepository {
   getRun(runId: string): { project_id: string } | undefined;
-  getAgentLogs(runId: string, agent?: string): any[];
 }
 
 const OWNERSHIP_SAFE_REQUIREMENT_ERROR = 'Requirement not found in current project';
@@ -37,28 +37,29 @@ export function clearQueryCache(): void {
   flowDetailCache.clear();
 }
 
-export interface ComponentConditionLike {
-  id: string;
-  requirementId: string;
-  condition: string;
-  conditionType: string;
+/**
+ * 从 run.state 的 CoverageIndex 读取覆盖记忆（摘要 + 组件条件/用例明细）。
+ * 取代"每次全量扫 agent_logs"——index 由 orchestrator 逐批 addCondition/addCase
+ * 增量累积并持久化。缺失/损坏时返回空 index。
+ */
+export function loadCoverageIndex(runId: string): CoverageIndex {
+  const stateStr = pipelineRepo.getRunState(runId);
+  if (!stateStr) return new CoverageIndex();
+  try {
+    const parsed = JSON.parse(stateStr);
+    if (Array.isArray(parsed)) return CoverageIndex.fromSummaryEntries(parsed);
+    return CoverageIndex.deserialize(parsed);
+  } catch {
+    return new CoverageIndex();
+  }
 }
 
 /**
- * Load the component conditions the Analyst produced in previous batches of the
- * same run. This is the single source for cross-batch component-condition
- * references — the Analyst uses it to validate `dependencies`, the Designer uses
- * it to build `availableComponentConditions`. Avoids scanning the same logs twice.
+ * 读取 Analyst 在之前批次产出的组件条件明细（供 Analyst 校验 dependencies、
+ * Designer 构建 availableComponentConditions），不再扫 agent_logs。
  */
-export function loadComponentConditionsFromLogs(runId: string): ComponentConditionLike[] {
-  const conditions: ComponentConditionLike[] = [];
-  for (const logEntry of pipelineRepo.getAgentLogs(runId, 'test_analyst')) {
-    for (const condition of logEntry.output_data?.testConditions ?? []) {
-      if (!condition || condition.conditionType !== 'component') continue;
-      conditions.push(condition);
-    }
-  }
-  return conditions;
+export function loadComponentConditions(runId: string): IndexedComponentCondition[] {
+  return loadCoverageIndex(runId).allComponentConditions();
 }
 
 // ============================================================
@@ -547,10 +548,6 @@ export function makePreviousBatchConditionsQuery(
   historyRepository: PreviousBatchSkillRepository = pipelineRepo,
   repository: RequirementSkillRepository = requirementRepo,
 ): SkillDefinition {
-  // Cache agent logs for the lifetime of this skill instance (one node
-  // execution) — LLM may call this for multiple requirements; avoid
-  // re-scanning the same logs each time.
-  let cachedLogs: any[] | null = null;
   return {
     name: 'previous_batch_conditions_query',
     description:
@@ -571,25 +568,13 @@ export function makePreviousBatchConditionsQuery(
         if (!run || run.project_id !== projectId || !isCurrentProjectRequirement) {
           return { error: OWNERSHIP_SAFE_REQUIREMENT_ERROR, conditions: [] };
         }
-        if (cachedLogs === null) {
-          cachedLogs = historyRepository.getAgentLogs(runId, 'test_analyst');
-        }
-        const logs = cachedLogs;
-        const conditions: Array<{ referenceId: string; id: string; title: string; category: string; primaryTechnique: string }> = [];
-        for (const logEntry of logs) {
-          const tcs: any[] = logEntry.output_data?.testConditions ?? [];
-          for (const tc of tcs) {
-            if (tc.requirementId === id && tc.conditionType === 'component') {
-              conditions.push({
-                referenceId: `component:${tc.requirementId}:${tc.id}`,
-                id: tc.id,
-                title: (tc.condition ?? '').slice(0, 120),
-                category: tc.category ?? 'functional',
-                primaryTechnique: tc.primaryTechnique ?? 'Unknown',
-              });
-            }
-          }
-        }
+const conditions = loadCoverageIndex(runId).componentConditionsFor(id).map((c) => ({
+          referenceId: `component:${c.requirementId}:${c.id}`,
+          id: c.id,
+          title: c.condition.slice(0, 120),
+          category: c.category,
+          primaryTechnique: c.primaryTechnique,
+        }));
         log.kv('conditions', conditions.length);
         return { requirementId: id, conditions };
       } catch (e: any) {
@@ -613,10 +598,6 @@ export function makePreviousBatchCasesQuery(
   historyRepository: PreviousBatchSkillRepository = pipelineRepo,
   repository: RequirementSkillRepository = requirementRepo,
 ): SkillDefinition {
-  // Cache agent logs for the lifetime of this skill instance (one node
-  // execution) — LLM may call this for multiple requirements; avoid
-  // re-scanning the same logs each time.
-  let cachedLogs: any[] | null = null;
   return {
     name: 'previous_batch_cases_query',
     description:
@@ -637,23 +618,11 @@ export function makePreviousBatchCasesQuery(
         if (!run || run.project_id !== projectId || !isCurrentProjectRequirement) {
           return { error: OWNERSHIP_SAFE_REQUIREMENT_ERROR, cases: [] };
         }
-        if (cachedLogs === null) {
-          cachedLogs = historyRepository.getAgentLogs(runId, 'quality_manager');
-        }
-        const logs = cachedLogs;
-        const cases: Array<{ title: string; testLevel: string; conditionId: string }> = [];
-        for (const logEntry of logs) {
-          const ftc: any[] = logEntry.output_data?.finalTestCases ?? [];
-          for (const tc of ftc) {
-            if (tc.requirementId === id) {
-              cases.push({
-                title: (tc.title ?? '').slice(0, 120),
-                testLevel: tc.testLevel ?? 'component',
-                conditionId: tc.conditionId ?? '',
-              });
-            }
-          }
-        }
+const cases = loadCoverageIndex(runId).casesFor(id).map((c) => ({
+          title: c.title.slice(0, 120),
+          testLevel: c.testLevel,
+          conditionId: c.conditionId,
+        }));
         log.kv('cases', cases.length);
         return { requirementId: id, cases };
       } catch (e: any) {

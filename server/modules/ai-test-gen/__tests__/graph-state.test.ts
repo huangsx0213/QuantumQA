@@ -72,6 +72,19 @@ describe('graph/state', () => {
 
       expect(channel.get()).toEqual([analyst, designer, quality, analystRetry]);
     });
+
+    it('bounds the skillCalls channel to the most recent records', () => {
+      const channel = TestGenStateAnnotation.spec.skillCalls.fromCheckpoint();
+      const make = (i: number) => ({
+        agent: 'test_analyst', skillName: `s${i}`, input: {}, output: {}, latencyMs: 1, timestamp: i,
+      });
+      const batch = Array.from({ length: 250 }, (_, i) => make(i));
+      channel.update([batch]);
+      const got = channel.get();
+      expect(got).toHaveLength(200);
+      expect(got[0].timestamp).toBe(50);
+      expect(got.at(-1)?.timestamp).toBe(249);
+    });
   });
 
   describe('CHECKPOINT_BY_PHASE', () => {

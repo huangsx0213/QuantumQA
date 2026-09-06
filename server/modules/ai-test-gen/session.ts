@@ -34,7 +34,6 @@ export interface BatchInput {
     crossEpicDependencies?: CrossEpicDependency[];
     previousBatchCoverageSummary?: PreviousBatchCoverageSummary[];
     relevantFlowBlueprints?: any[];
-    flowReferencedComponentContext?: Record<string, any[]>;
     phase: TestGenState['phase'];
     errors: any[];
   };

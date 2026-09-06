@@ -22,6 +22,7 @@ import type {
   HtmlRequirementSnapshot,
 } from '../html-knowledge/types.ts';
 import { Orchestrator } from '../orchestrator.ts';
+import { CoverageIndex } from '../coverage-index.ts';
 import { RunCacheRegistry } from '../run-cache-registry.ts';
 import { CheckpointUnavailableError } from '../session.ts';
 import { SSEGateway } from '../sse-gateway.ts';
@@ -690,35 +691,22 @@ describe('HTML runtime closure invariants', () => {
     const liveRequirements = requirementsFromHtmlSnapshot(snapshot);
     liveRequirementRepo.listByProject.mockImplementation(() => liveRequirements);
     pipelineRepo.getRun.mockReturnValue({ project_id: 'project-1' });
-    (pipelineRepo.getAgentLogs as any).mockImplementation((_runId: string, agentName?: string) => {
-      if (agentName === 'test_analyst') {
-        return [{
-          output_data: {
-            testConditions: [{
-              id: 'condition-snapshot',
-              requirementId: 'story-a',
-              condition: 'Snapshot-backed condition',
-              conditionType: 'component',
-              category: 'functional',
-              primaryTechnique: 'EP',
-            }],
-          },
-        }];
-      }
-      if (agentName === 'quality_manager') {
-        return [{
-          output_data: {
-            finalTestCases: [{
-              requirementId: 'story-a',
-              title: 'Snapshot-backed case',
-              testLevel: 'component',
-              conditionId: 'condition-snapshot',
-            }],
-          },
-        }];
-      }
-      return [];
+    const idx = new CoverageIndex();
+    idx.addCondition({
+      id: 'condition-snapshot',
+      requirementId: 'story-a',
+      condition: 'Snapshot-backed condition',
+      conditionType: 'component',
+      category: 'functional',
+      primaryTechnique: 'EP',
     });
+    idx.addCase({
+      requirementId: 'story-a',
+      title: 'Snapshot-backed case',
+      testLevel: 'component',
+      conditionId: 'condition-snapshot',
+    });
+    pipelineRepo.getRunState.mockReturnValue(JSON.stringify(idx.serialize()));
     const runtime = makeRuntime();
     const batch = [{
       id: 'story-a',

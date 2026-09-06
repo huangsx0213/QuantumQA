@@ -49,6 +49,9 @@ export interface SkillCallRecord {
   timestamp: number;
 }
 
+/** skillCalls channel 的最大条数（有界 reducer，防止 checkpoint 无限增长）。 */
+const MAX_SKILL_CALL_RECORDS = 200;
+
 export type Phase =
   | 'init'
   | 'preparation'
@@ -152,8 +155,7 @@ export const TestGenStateAnnotation = Annotation.Root({
   // === L2 Association Layer: Flow Blueprints Relevant to the Current Batch (written after preparation node filtering) ===
   relevantFlowBlueprints: Annotation<PipelineBusinessFlowBlueprint[] | undefined>,
 
-  // === L2 Association Layer: Component Story Context Referenced by Flows (includes AC, injected as prompt context, does not generate batches separately) ===
-  flowReferencedComponentContext: Annotation<Record<string, any[]> | undefined>,
+  
 
   // === Preparation Outputs ===
   environmentReady: Annotation<boolean>,
@@ -183,9 +185,14 @@ export const TestGenStateAnnotation = Annotation.Root({
   // === Review Feedback ===
   humanReviewFeedback: Annotation<string>,
 
-  // === Skill Call Records ===
+// === Skill Call Records ===
+  // 有界 reducer：仅保留最近 MAX_SKILL_CALL_RECORDS 条，避免跨批次长 run 使
+  // checkpoint 无限膨胀（真值另存于 agent_logs.tool_history）。
   skillCalls: Annotation<SkillCallRecord[]>({
-    reducer: (current, update) => [...current, ...update],
+    reducer: (current, update) => {
+      const merged = [...current, ...update];
+      return merged.length > MAX_SKILL_CALL_RECORDS ? merged.slice(-MAX_SKILL_CALL_RECORDS) : merged;
+    },
     default: () => [],
   }),
 

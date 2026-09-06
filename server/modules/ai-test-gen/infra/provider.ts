@@ -162,6 +162,14 @@ export function mergeSignals(signal1?: AbortSignal, signal2?: AbortSignal): Abor
   return controller.signal;
 }
 
+function describeErr(err: unknown): string {
+  if (err instanceof APIError) {
+    return `${err.name} status=${err.status} code=${err.code ?? 'n/a'} message="${err.message}"`;
+  }
+  if (err instanceof Error) return `${err.name}: "${err.message}"${err.cause ? ` cause=${String(err.cause)}` : ''}`;
+  return String(err);
+}
+
 function formatSdkError(err: unknown, providerName: string, agentTag: string, extra?: string): Error {
   if (err instanceof APIError) {
     return new Error(`Provider ${providerName} error ${err.status}${agentTag}: ${err.message}${extra ? ` ${extra}` : ''}`);
@@ -346,7 +354,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[azure-sdk] stream request failed${agentTag}: model=${config.deployment} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0}`);
+        Log.for('provider').error(`[azure-sdk] stream request failed${agentTag}: model=${config.deployment} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
         throw formatSdkError(err, 'azure', agentTag, `endpoint=${config.endpoint} model=${config.deployment}`);
       }
     }
@@ -544,7 +552,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[openai-compat-sdk] stream request failed${agentTag}: model=${config.model} endpoint=${config.endpoint || 'default'} messages=${messages.length} temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0}`);
+        Log.for('provider').error(`[openai-compat-sdk] stream request failed${agentTag}: model=${config.model} endpoint=${config.endpoint || 'default'} messages=${messages.length} temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
         throw formatSdkError(err, 'openai-compat', agentTag, `endpoint=${config.endpoint || 'default'} model=${config.model}`);
       }
     }
@@ -726,7 +734,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[openai-responses] stream request failed${agentTag}: model=${config.model} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0}`);
+        Log.for('provider').error(`[openai-responses] stream request failed${agentTag}: model=${config.model} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
         throw formatSdkError(err, 'openai-responses', agentTag, `model=${config.model}`);
       }
     }
@@ -821,6 +829,6 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
   return { streamChat };
 }
 
-const FETCH_TIMEOUT_MS = 900_000;
+const FETCH_TIMEOUT_MS = 1_800_000;
 
 

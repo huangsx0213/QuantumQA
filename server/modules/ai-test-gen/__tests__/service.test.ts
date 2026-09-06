@@ -859,7 +859,7 @@ describe('Orchestrator', () => {
     await retrying.retry('retry-coverage');
 
     const serialized = mockRepo.updateRunState.mock.calls.at(-1)?.[1] as string;
-    const coverage = new Map(JSON.parse(serialized));
+    const coverage = new Map(JSON.parse(serialized).summary);
     expect(coverage.get('story-old')).toMatchObject({ conditionCount: 1 });
     expect(coverage.get('story-new')).toMatchObject({ conditionCount: 1 });
   });
@@ -937,7 +937,7 @@ describe('Orchestrator', () => {
     await retrying.retry('retry-filtered');
 
     const serialized = mockRepo.updateRunState.mock.calls.at(-1)?.[1] as string;
-    const coverage = new Map<string, any>(JSON.parse(serialized));
+    const coverage = new Map<string, any>(JSON.parse(serialized).summary);
     expect(coverage.get('story-prior')).toMatchObject({
       conditionCount: 1,
       caseCountByLevel: { component: 1, integration: 0 },

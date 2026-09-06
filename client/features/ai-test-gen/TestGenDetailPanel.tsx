@@ -36,6 +36,7 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 interface NodeDetailProps {
   runId?: string;
+  projectId?: string;
   node: {
     id: string;
     kind?: string;
@@ -98,6 +99,13 @@ function formatTokens(n: number) {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`; 
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`; 
   return n.toLocaleString(); 
+}
+
+function formatBytes(n: number | null | undefined) {
+  if (n == null) return '-';
+  if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
 }
 
 function getPriorityBadgeClass(priority?: string) {
@@ -170,7 +178,16 @@ function detectConditionTestLevel(condition: any): 'component' | 'integration' |
   return undefined;
 }
 
-function PreparationSummaryView({ node, agentLog, thinkingText, allAgentLogs, startConfig, requirements, flowStories, modelName }: { node: any; agentLog: any; thinkingText: import('../../shared/test-gen-run/types').ThinkingEntry[] | null; allAgentLogs: any[]; startConfig?: any; requirements?: any[]; flowStories?: any[]; modelName?: string | null }) {
+function ConfigRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5 border-b border-slate-100 last:border-b-0">
+      <span className="text-xs text-slate-400 shrink-0">{label}</span>
+      <span className={`text-xs font-medium text-slate-700 text-right min-w-0 truncate ${mono ? 'font-mono' : ''}`} title={typeof value === 'string' ? value : undefined}>{value}</span>
+    </div>
+  );
+}
+
+function PreparationSummaryView({ node, agentLog, thinkingText, allAgentLogs, startConfig, requirements, flowStories, modelName, projectId }: { node: any; agentLog: any; thinkingText: import('../../shared/test-gen-run/types').ThinkingEntry[] | null; allAgentLogs: any[]; startConfig?: any; requirements?: any[]; flowStories?: any[]; modelName?: string | null; projectId?: string }) {
   const meta = node?.meta;
   const output = agentLog?.output_data;
 
@@ -192,6 +209,24 @@ function PreparationSummaryView({ node, agentLog, thinkingText, allAgentLogs, st
   // L1 Epic 索引（来自 preparation:context 事件）
   const globalStats = meta?.globalStats;
   const globalEpicIndex = meta?.globalEpicIndex ?? [];
+
+  // HTML 知识集详情（启动配置引用了 set 时拉取页面列表）
+  const htmlSetId: string | undefined = startConfig?.htmlKnowledgeSetId;
+  const [htmlSet, setHtmlSet] = useState<{ pageCount: number; totalBytes: number; pages: { fileName: string; pageTitle: string | null; byteSize: number | null }[] } | null>(null);
+  useEffect(() => {
+    if (!htmlSetId || !projectId) { setHtmlSet(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { api } = await import('@/shared/services/api');
+        const s = await api.testGen.htmlKnowledge.getSet(projectId, htmlSetId);
+        if (!cancelled) setHtmlSet({ pageCount: s.pageCount, totalBytes: s.totalBytes, pages: s.pages.map((p) => ({ fileName: p.fileName, pageTitle: p.pageTitle, byteSize: p.byteSize })) });
+      } catch {
+        if (!cancelled) setHtmlSet(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [htmlSetId, projectId]);
 
   return (
     <div className="p-4 space-y-4 h-full overflow-y-auto">
@@ -223,38 +258,80 @@ function PreparationSummaryView({ node, agentLog, thinkingText, allAgentLogs, st
         </div>
       </div>
 
-      {/* Pipeline Config Header */}
-      <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/35 rounded-xl p-4 border border-indigo-100/60 shadow-sm">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-800 uppercase tracking-wider mb-3">
-          <Zap size={12} className="text-indigo-600" />
-          Pipeline Configuration
+      {/* Pipeline Config Header — 完整启动配置 */}
+      <div className="bg-gradient-to-br from-indigo-50/70 to-blue-50/35 rounded-xl p-3 border border-indigo-100/60 shadow-sm space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-800 uppercase tracking-wider">
+            <Zap size={12} className="text-indigo-600" />
+            Pipeline Configuration
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-indigo-100/70 text-indigo-700 border border-indigo-200/60">
+            {startConfig?.mode || 'auto'} mode
+          </span>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-0.5">Mode</span>
-            <span className="font-semibold text-slate-700 capitalize">{startConfig?.mode || 'auto'}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-0.5">LLM Model</span>
-            <span className="font-semibold text-slate-700 truncate font-mono text-xs">{modelName || 'Unknown'}</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-0.5">Test Levels</span>
-            <span className="font-semibold text-slate-700">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-2.5">
+          {/* Runtime */}
+          <div className="bg-white/80 border border-indigo-100/50 rounded-lg px-3 py-1">
+            <ConfigRow label="Mode" value={<span className="capitalize">{startConfig?.mode || 'auto'}</span>} />
+            <ConfigRow label="Cache" value={(
               <span className="inline-flex items-center gap-1">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500" />
-                Component
-                <span className="text-slate-300 mx-0.5">+</span>
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500" />
-                Integration
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${startConfig?.useCache ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                {startConfig?.useCache ? 'Enabled' : 'Disabled'}
               </span>
-            </span>
+            )} />
+            <ConfigRow label="Test Levels" value={(
+              <span className="inline-flex items-center gap-1">
+                <span className="text-[10px] font-bold uppercase px-1.5 py-0 rounded border bg-blue-50 text-blue-600 border-blue-100">Component</span>
+                <span className="text-[10px] font-bold uppercase px-1.5 py-0 rounded border bg-violet-50 text-violet-600 border-violet-100">Integration</span>
+              </span>
+            )} />
+            <ConfigRow label="Reference Runs" value={startConfig?.referenceRunIds?.length ? `${startConfig.referenceRunIds.length} run(s)` : 'None'} />
           </div>
-          <div className="flex flex-col">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-0.5">Cache</span>
-            <span className="font-semibold text-slate-700">{startConfig?.useCache ? 'Enabled' : 'Disabled'}</span>
+
+          {/* AI Model */}
+          <div className="bg-white/80 border border-indigo-100/50 rounded-lg px-3 py-1">
+            <ConfigRow label="Provider" value={startConfig?.providerConfigName || 'Default'} mono />
+            <ConfigRow label="Model" value={modelName || startConfig?.model || 'Unknown'} mono />
+            <ConfigRow label="Reasoning Effort" value={startConfig?.reasoningEffort || 'default'} mono />
+            <ConfigRow label="Reasoning Summary" value={startConfig?.reasoningSummary || 'default'} mono />
+            <ConfigRow label="Text Verbosity" value={startConfig?.textVerbosity || 'default'} mono />
           </div>
+        </div>
+
+        {/* Knowledge Sources */}
+        <div className="bg-white/80 border border-indigo-100/50 rounded-lg px-3 py-2">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <span className="text-xs text-slate-400">Knowledge Sources</span>
+            {htmlSetId && (
+              <span className="inline-flex items-center gap-1.5">
+                {htmlSet && (
+                  <span className="text-[10px] font-bold px-1.5 py-0 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">
+                    {htmlSet.pageCount} page(s) · {formatBytes(htmlSet.totalBytes)}
+                  </span>
+                )}
+                <span className="text-[10px] text-slate-300 font-mono" title={htmlSetId}>{htmlSet ? '' : 'loading… '}{htmlSetId}</span>
+              </span>
+            )}
+          </div>
+          {htmlSetId ? (
+            htmlSet && htmlSet.pages.length > 0 ? (
+              <ul className="divide-y divide-slate-100">
+                {htmlSet.pages.map((p, i) => (
+                  <li key={i} className="flex items-center gap-2 py-1">
+                    <FileText size={11} className="text-indigo-400 shrink-0" />
+                    <span className="text-xs font-mono text-slate-700 truncate">{p.fileName}</span>
+                    {p.pageTitle && <span className="text-xs text-slate-400 truncate">· {p.pageTitle}</span>}
+                    <span className="text-[10px] text-slate-400 shrink-0 ml-auto">{formatBytes(p.byteSize)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-slate-400 italic py-1">{htmlSet ? 'No pages in set' : 'Loading…'}</p>
+            )
+          ) : (
+            <p className="text-xs text-slate-400 italic">No HTML knowledge set attached</p>
+          )}
         </div>
       </div>
 
@@ -3098,6 +3175,7 @@ const statusColors: Record<string, { badge: string; label: string }> = {
 
 export function TestGenDetailPanel({
   runId,
+  projectId,
   node,
   agentLog,
   checkpointData,
@@ -3294,7 +3372,7 @@ export function TestGenDetailPanel({
         {nodeType === 'agent' ? (
           <AgentDetailTabs agentLog={agentLog} node={node} thinkingText={thinkingText} agentLogs={agentLogs} />
         ) : nodeType === 'preparation' ? (
-          <PreparationSummaryView node={node} agentLog={agentLog} thinkingText={thinkingText} allAgentLogs={agentLogs || []} startConfig={startConfig} requirements={requirements} flowStories={flowStories} modelName={modelName} />
+          <PreparationSummaryView node={node} agentLog={agentLog} thinkingText={thinkingText} allAgentLogs={agentLogs || []} startConfig={startConfig} requirements={requirements} flowStories={flowStories} modelName={modelName} projectId={projectId} />
         ) : nodeType === 'checkpoint' ? (
           <CheckpointViewWithAudit
             runId={runId}

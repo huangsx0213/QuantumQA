@@ -475,10 +475,62 @@ describe('callLLMWithStructuredOutput', () => {
     }
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/tool state projection failed/i);
+expect((error as Error).message).toMatch(/tool state projection failed/i);
     expect((error as Error).message).not.toContain(rawEvidence);
     expect((error as Error).message).not.toContain('PRIVATE_PROJECTION_DETAILS');
     expect(provider.streamChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('repairs only the failing fields (targeted) instead of regenerating the whole object', async () => {
+    const calls: any[][] = [];
+    let parseCount = 0;
+    const provider = {
+      streamChat: vi.fn(async function* (messages: any[]) {
+        calls.push(structuredClone(messages));
+        yield { type: 'content', content: '{"draftTestCases":[]}' };
+        yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1 } };
+      }),
+    } as any;
+
+    const profile = {
+      toolSchema: { type: 'object', properties: {} },
+      // 跳过 Phase 1 解析，聚焦测 Phase 2 的定点修复重试。
+      shouldAttemptPhase1Extraction: () => false,
+      normalize: (raw: unknown) => raw,
+      parse: (normalized: unknown) => {
+        parseCount += 1;
+        if (parseCount === 1) {
+          // 模拟 zod 校验失败：两个字段违规（一个深路径 + 一个浅路径）。
+          throw {
+            issues: [
+              { code: 'custom', path: ['draftTestCases', 0, 'steps', 0, 'expected'], message: 'expected must be a single assertion (found 2 semicolon-separated segments).' },
+              { code: 'custom', path: ['draftTestCases', 0, 'testLevel'], message: 'invalid literal value, expected "component"' },
+            ],
+          };
+        }
+        return normalized;
+      },
+      formatValidationError: () => 'Schema validation failed',
+    };
+
+    await callLLMWithStructuredOutput(
+      provider,
+      [],
+      [],
+      profile as any,
+      undefined,
+      'test_designer',
+    );
+
+    // 一次校验失败 → 一次定点修复重试成功返回。
+    expect(parseCount).toBe(2);
+    const repairUser = calls[2].find((m) => m.role === 'user' && /Fix ONLY the fields/.test(m.content));
+    expect(repairUser).toBeTruthy();
+    expect(String(repairUser.content)).toContain('draftTestCases.0.steps.0.expected');
+    expect(String(repairUser.content)).toContain('draftTestCases.0.testLevel');
+    expect(String(repairUser.content)).not.toContain('matching the schema exactly');
+    // 携带上一份 assistant 输出作为"最小改动"的锚点。
+    expect(calls[2].some((m) => m.role === 'assistant')).toBe(true);
   });
 });
 

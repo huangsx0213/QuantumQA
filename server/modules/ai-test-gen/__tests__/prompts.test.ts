@@ -93,7 +93,8 @@ describe('buildAnalystSystemPrompt', () => {
 
       expect(prompt).toContain('For EVERY object in `testConditions`, these fields are mandatory');
       expect(prompt).toContain('The result must contain ALL derived test conditions');
-      expect(prompt).toContain('End with a single JSON code block');
+      expect(prompt).toContain('Output Format — ONE of TWO Modes');
+      expect(prompt).toContain('emit_condition');
       expect(prompt).toContain('analyst_rules');
     }
   });
@@ -191,8 +192,7 @@ describe('buildDesignerSystemPrompt', () => {
     expect(prompt).toContain('Tool-Use Structured Output');
     expect(prompt).toContain('Do not end your analysis until you have described at least one complete test case for extraction.');
     expect(prompt).toContain('For EVERY object in `draftTestCases`, these fields are mandatory');
-    expect(prompt).toContain('declare_step');
-    expect(prompt).toContain('declare_case');
+    expect(prompt).toContain('emit_case');
   });
 
   it('enforces a single output mode (all tools OR all JSON — never mixed)', () => {
@@ -228,7 +228,6 @@ describe('buildDesignerSystemPrompt', () => {
     // Detailed design rules moved to the designer_rules knowledge skill; the
     // prompt must tell the LLM to load them before designing any test cases.
     expect(prompt).toContain('designer_rules');
-    expect(prompt).toContain('Detailed Rules (MANDATORY — load before designing)');
     expect(prompt).toContain('Step 2.5 — Load detailed rules (MANDATORY)');
     // The inline rule sections are gone (moved to knowledge/designer-rules.md).
     expect(prompt).not.toContain('Step-Writing Rules (操作原子性)');
@@ -257,14 +256,16 @@ describe('buildQualitySystemPrompt', () => {
       humanReviewFeedback: '',
     } as any);
 
-    expect(prompt).toContain('End with a single JSON code block containing the COMPLETE output. Nothing after it.');
+    expect(prompt).toContain('Output Format — ONE of TWO Modes');
+    expect(prompt).toContain('emit_review');
+    expect(prompt).toContain('emit_coverage_row');
     // F14: Quality must read the Analyst conditions first before judging.
     expect(prompt).toContain('Read the conditions first');
     // Detailed review rules moved to the quality_rules knowledge skill; the
     // prompt must tell the LLM to load them before reviewing any cases.
     expect(prompt).toContain('quality_rules');
     expect(prompt).toContain('Load Detailed Rules (MANDATORY)');
-    expect(prompt).toContain('Detailed Rules (MANDATORY — load before reviewing)');
+    expect(prompt).toContain('review dimensions (9 dimensions)');
     // The inline rule sections are gone (moved to knowledge/quality-rules.md).
     expect(prompt).not.toContain('Review Dimensions (checklist, not a vibe check)');
     expect(prompt).not.toContain('Coverage Matrix (MANDATORY — F27');

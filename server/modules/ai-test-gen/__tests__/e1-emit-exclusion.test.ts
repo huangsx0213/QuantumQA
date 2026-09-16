@@ -2,30 +2,34 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   callLLMWithStructuredOutput,
 } from '../graph/nodes/utils.ts';
-import { declareCaseSkill, declareStepSkill } from '../graph/skills/declare-step-skill.ts';
+import { emitCaseSkill } from '../graph/skills/emit-case-skill.ts';
 
-function makeStepArgs(i: number) {
-  return { caseId: 'TC-001', stepNumber: i, verb: 'verify', targetHint: `element ${i}`, expectation: { kind: 'element-visible' } };
+function makeCaseArgs(i: number) {
+  return {
+    id: `TC-${i}`, title: `Case ${i}`, conditionId: 'C-1', requirementId: 'req-1',
+    priority: 'high', category: 'functional', testLevel: 'component', techniqueApplied: 'Equivalence Partitioning',
+    steps: [{ verb: 'verify', targetHint: `element ${i}`, expectation: { kind: 'element-visible' } }],
+  };
 }
 
-describe('E1 early termination excludes declaration tools', () => {
-  it('does NOT abort the ReAct loop while the LLM is legitimately declaring steps via declare_step', async () => {
+describe('E1 early termination excludes emit_case', () => {
+  it('does NOT abort the ReAct loop while the LLM is legitimately emitting cases via emit_case', async () => {
     let callCount = 0;
     // ReAct loop invokes streamChat once per round; each call returns a fresh stream.
     const provider = {
       streamChat: vi.fn(async function* () {
         callCount += 1;
-        // 5 rounds each declaring one step via the declare_step tool. This is LONGER
+        // 5 rounds each emitting one case via the emit_case tool. This is LONGER
         // than the old E1 threshold (3 consecutive same-tool calls → forced abort).
         if (callCount <= 5) {
-          yield { type: 'content', content: `declaring step ${callCount}` };
-          yield { type: 'tool_call_start', toolCall: { id: `d${callCount}`, name: 'declare_step', args: {} } };
-          yield { type: 'tool_call_end', toolCall: { id: `d${callCount}`, name: 'declare_step', args: makeStepArgs(callCount) } };
+          yield { type: 'content', content: `emitting case ${callCount}` };
+          yield { type: 'tool_call_start', toolCall: { id: `e${callCount}`, name: 'emit_case', args: {} } };
+          yield { type: 'tool_call_end', toolCall: { id: `e${callCount}`, name: 'emit_case', args: makeCaseArgs(callCount) } };
           yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1, reasoningTokens: 0 } };
           return;
         }
         // ...then a 6th round with no tool calls (normal exit).
-        yield { type: 'content', content: 'declaration complete' };
+        yield { type: 'content', content: 'emission complete' };
         yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1, reasoningTokens: 0 } };
       }),
     } as any;
@@ -41,32 +45,34 @@ describe('E1 early termination excludes declaration tools', () => {
     await callLLMWithStructuredOutput(
       provider,
       [] as any,
-      [declareCaseSkill, declareStepSkill] as any,
+      [emitCaseSkill] as any,
       profile as any,
       undefined,
       'test_designer',
     );
 
-    // 5 declare_step rounds + 1 normal-exit round = 6 streamChat calls.
-    // OLD behavior (E1 counts declare_step): after 4 calls the last 3 records are all
-    // declare_step → forced abort at 4 calls. NEW behavior must reach all 6.
-    // (E1 fires on the round AFTER the 4th call completes since it checks post-stream.)
-    console.log('ACTUAL streamChat calls:', provider.streamChat.mock.calls.length);
+    // 5 emit_case rounds + 1 normal-exit round = 6 streamChat calls.
+    // OLD behavior (E1 counts emit_case): after 4 calls the last 3 records are all
+    // emit_case → forced abort at 4 calls. NEW behavior must reach all 6.
     expect(provider.streamChat).toHaveBeenCalledTimes(6);
   });
 });
 
-describe('runtime schema gate on declare_step (real-world retry cause)', () => {
-  it('rejects a non-vocabulary verb in declare_step args at call time, before declare-extract', async () => {
+describe('runtime schema gate on emit_case (real-world retry cause)', () => {
+  it('rejects a non-vocabulary verb in emit_case args at call time, before emit-extract', async () => {
     let callCount = 0;
     const provider = {
       streamChat: vi.fn(async function* () {
         callCount += 1;
         if (callCount === 1) {
-          yield { type: 'content', content: 'declaring' };
+          yield { type: 'content', content: 'emitting' };
           // "refresh browser page" — not a vocabulary verb; MUST be rejected by schema gate
-          yield { type: 'tool_call_start', toolCall: { id: 'bad1', name: 'declare_step', args: {} } };
-          yield { type: 'tool_call_end', toolCall: { id: 'bad1', name: 'declare_step', args: { caseId: 'TC-1', steps: [{ verb: 'refresh', targetHint: 'browser page' }] } } };
+          yield { type: 'tool_call_start', toolCall: { id: 'bad1', name: 'emit_case', args: {} } };
+          yield { type: 'tool_call_end', toolCall: { id: 'bad1', name: 'emit_case', args: {
+            id: 'TC-1', title: 'Bad', conditionId: 'C-1', requirementId: 'req-1',
+            priority: 'high', category: 'functional', testLevel: 'component', techniqueApplied: 'Equivalence Partitioning',
+            steps: [{ verb: 'refresh', targetHint: 'browser page' }],
+          } } };
           yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1, reasoningTokens: 0 } };
           return;
         }
@@ -86,14 +92,13 @@ describe('runtime schema gate on declare_step (real-world retry cause)', () => {
     await callLLMWithStructuredOutput(
       provider,
       [] as any,
-      [declareCaseSkill, declareStepSkill] as any,
+      [emitCaseSkill] as any,
       profile as any,
       undefined,
       'test_designer',
     );
 
-    // The loop continues (2nd round) — the invalid tool call was rejected, not acked,
-    // so declare-extract built nothing and the LLM retried in a fresh round.
+    // The loop continues (2nd round) — the invalid tool call was rejected, not acked.
     expect(provider.streamChat).toHaveBeenCalledTimes(2);
   });
 
@@ -103,9 +108,13 @@ describe('runtime schema gate on declare_step (real-world retry cause)', () => {
       streamChat: vi.fn(async function* () {
         callCount += 1;
         if (callCount === 1) {
-          yield { type: 'content', content: 'declaring' };
-          yield { type: 'tool_call_start', toolCall: { id: 'bad2', name: 'declare_step', args: {} } };
-          yield { type: 'tool_call_end', toolCall: { id: 'bad2', name: 'declare_step', args: { caseId: 'TC-1', steps: [{ verb: 'fill', targetHint: 'username input field' }] } } };
+          yield { type: 'content', content: 'emitting' };
+          yield { type: 'tool_call_start', toolCall: { id: 'bad2', name: 'emit_case', args: {} } };
+          yield { type: 'tool_call_end', toolCall: { id: 'bad2', name: 'emit_case', args: {
+            id: 'TC-1', title: 'Bad', conditionId: 'C-1', requirementId: 'req-1',
+            priority: 'high', category: 'functional', testLevel: 'component', techniqueApplied: 'Equivalence Partitioning',
+            steps: [{ verb: 'fill', targetHint: 'username input field' }],
+          } } };
           yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1, reasoningTokens: 0 } };
           return;
         }
@@ -125,7 +134,7 @@ describe('runtime schema gate on declare_step (real-world retry cause)', () => {
     await callLLMWithStructuredOutput(
       provider,
       [] as any,
-      [declareCaseSkill, declareStepSkill] as any,
+      [emitCaseSkill] as any,
       profile as any,
       undefined,
       'test_designer',

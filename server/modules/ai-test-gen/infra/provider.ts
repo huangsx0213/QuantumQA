@@ -1,4 +1,4 @@
-import OpenAI, { APIError, APIConnectionError, APIConnectionTimeoutError } from 'openai';
+﻿import OpenAI, { APIError, APIConnectionError, APIConnectionTimeoutError } from 'openai';
 import { Log } from '../../../shared/services/logger.ts';
 
 export type ProviderConfig =
@@ -49,7 +49,7 @@ export interface ChatOptions {
   responseFormat?: 'json_object' | 'text';
   jsonSchema?: Record<string, unknown>;
   signal?: AbortSignal;
-  /** 节点级超时（毫秒），仅用于错误消息定位，provider 不消费。 */
+  /** 鑺傜偣绾ц秴鏃讹紙姣锛夛紝浠呯敤浜庨敊璇秷鎭畾浣嶏紝provider 涓嶆秷璐广€?*/
   timeoutMs?: number;
   agentName?: string;
   reasoningEffort?: 'low' | 'medium' | 'high';
@@ -93,6 +93,8 @@ export interface StreamChunk {
 }
 
 export interface AIProvider {
+  /** Provider kind ('azure-openai' | 'openai-compatible' | 'openai-responses'), surfaced for failure telemetry. */
+  readonly kind?: string;
   streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<StreamChunk>;
 }
 
@@ -125,6 +127,17 @@ function normalizeStructuredOutputSchema(
     schema: jsonSchema,
     strict: true,
   };
+}
+
+function serializeToolArguments(args: unknown): string {
+  if (args === undefined || args === null) return '';
+  if (typeof args === 'string') return args;
+  try {
+    const s = JSON.stringify(args);
+    return typeof s === 'string' ? s : '';
+  } catch {
+    return '';
+  }
 }
 
 function buildMalformedToolCall(
@@ -177,7 +190,7 @@ function formatSdkError(err: unknown, providerName: string, agentTag: string, ex
   return err instanceof Error ? err : new Error(String(err));
 }
 
-/** 短暂睡眠（指数退避等待）；unref 避免阻塞进程退出 */
+/** 鐭殏鐫＄湢锛堟寚鏁伴€€閬跨瓑寰咃級锛泆nref 閬垮厤闃诲杩涚▼閫€鍑?*/
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const t = setTimeout(resolve, ms);
@@ -186,14 +199,14 @@ function delay(ms: number): Promise<void> {
 }
 
 /**
- * 发起流式请求时对"超时类连接错误"（APIConnectionTimeoutError，即
- * "Request timed out."）做有限次指数退避重试（默认 2 次：2s、4s）。
+ * 鍙戣捣娴佸紡璇锋眰鏃跺"瓒呮椂绫昏繛鎺ラ敊璇?锛圓PIConnectionTimeoutError锛屽嵆
+ * "Request timed out."锛夊仛鏈夐檺娆℃寚鏁伴€€閬块噸璇曪紙榛樿 2 娆★細2s銆?s锛夈€?
  *
- * 为什么需要：OpenAI SDK 内置重试（maxRetries）会处理 429/408/409/5xx 与普通
- * 连接错误，但对 timeout 类默认不重试——实测 Azure Responses 会在长推理/无
- * 增量流上抛出 "Request timed out."，直接让整个 agent 失败。这里只在
- * **stream 首字节之前**失败时重试（调用 action 会重新发起请求）；一旦开始
- * 读取 chunk，中断不再重试，避免放大重复消费。
+ * 涓轰粈涔堥渶瑕侊細OpenAI SDK 鍐呯疆閲嶈瘯锛坢axRetries锛変細澶勭悊 429/408/409/5xx 涓庢櫘閫?
+ * 杩炴帴閿欒锛屼絾瀵?timeout 绫婚粯璁や笉閲嶈瘯鈥斺€斿疄娴?Azure Responses 浼氬湪闀挎帹鐞?鏃?
+ * 澧為噺娴佷笂鎶涘嚭 "Request timed out."锛岀洿鎺ヨ鏁翠釜 agent 澶辫触銆傝繖閲屽彧鍦?
+ * **stream 棣栧瓧鑺備箣鍓?*澶辫触鏃堕噸璇曪紙璋冪敤 action 浼氶噸鏂板彂璧疯姹傦級锛涗竴鏃﹀紑濮?
+ * 璇诲彇 chunk锛屼腑鏂笉鍐嶉噸璇曪紝閬垮厤鏀惧ぇ閲嶅娑堣垂銆?
  */
 async function createStreamWithRetry<T>(
   action: () => Promise<T>,
@@ -208,16 +221,16 @@ async function createStreamWithRetry<T>(
       lastErr = err;
       const isTimeout = err instanceof APIConnectionTimeoutError;
       const isConn = err instanceof APIConnectionError;
-      // 429 限流需要比连接错误更长的等待（Mistral 等配额型接口常返回
-      // "429 status code (no body)" 且无 Retry-After 头，SDK 短退避不够）
+      // 429 闄愭祦闇€瑕佹瘮杩炴帴閿欒鏇撮暱鐨勭瓑寰咃紙Mistral 绛夐厤棰濆瀷鎺ュ彛甯歌繑鍥?
+      // "429 status code (no body)" 涓旀棤 Retry-After 澶达紝SDK 鐭€€閬夸笉澶燂級
       const isRateLimited = err instanceof APIError && (err.status === 429 || err.status === 503);
       if (attempt === max || !(isTimeout || isConn || isRateLimited)) throw err;
       if (opts.signal?.aborted) throw err;
-      // 429/503：5s → 10s → 20s；超时/连接：2s → 4s → 8s
+      // 429/503锛?s 鈫?10s 鈫?20s锛涜秴鏃?杩炴帴锛?s 鈫?4s 鈫?8s
       const base = isRateLimited ? 5_000 : 2_000;
       const delayMs = base * 2 ** attempt;
       Log.for('provider').warn(
-        `[${opts.label}] stream create failed ${err instanceof Error ? `(${err.message})` : ''} — retry ${attempt + 1}/${max} in ${delayMs}ms`,
+        `[${opts.label}] stream create failed ${err instanceof Error ? `(${err.message})` : ''} 鈥?retry ${attempt + 1}/${max} in ${delayMs}ms`,
       );
       await delay(delayMs);
       if (opts.signal?.aborted) throw err;
@@ -226,9 +239,9 @@ async function createStreamWithRetry<T>(
   throw lastErr;
 }
 
-// ─── Token limit ladder ───
+// 鈹€鈹€鈹€ Token limit ladder 鈹€鈹€鈹€
 // Many OpenAI-compatible endpoints reject max_tokens above the model's context
-// cap. Try 1M → 500k → 200k → 120k → 60k, downgrading on rejection.
+// cap. Try 1M 鈫?500k 鈫?200k 鈫?120k 鈫?60k, downgrading on rejection.
 const MAX_TOKEN_LADDER = [1_000_000, 500_000, 200_000, 120_000, 60_000];
 
 function buildMaxTokenLadder(requested: number | undefined): number[] {
@@ -250,7 +263,7 @@ export function createAIProvider(config: ProviderConfig): AIProvider {
   }
 }
 
-// ─── Provider Factories ───
+// 鈹€鈹€鈹€ Provider Factories 鈹€鈹€鈹€
 
 function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-openai' }): AIProvider {
   const client = new OpenAI({
@@ -270,13 +283,13 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
         for (const tc of m.toolCalls) {
           input.push({
             type: 'function_call',
-            call_id: tc.id,
-            name: tc.function.name,
-            arguments: typeof tc.function.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function.arguments),
+            call_id: tc.id || '',
+            name: tc.function?.name || '',
+            arguments: serializeToolArguments(tc.function?.arguments),
           });
         }
-      } else if (m.role === 'tool' && m.toolCallId) {
-        input.push({ type: 'function_call_output', call_id: m.toolCallId, output: m.content || ' ' });
+      } else if (m.role === 'tool') {
+        input.push({ type: 'function_call_output', call_id: m.toolCallId || '', output: m.content || ' ' });
       } else {
         input.push({ role: m.role, content: m.content || '' });
       }
@@ -295,7 +308,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
   }
 
   // Cache the max_tokens value resolved by the ladder on first successful
-  // call — subsequent calls reuse it to avoid repeated probe-and-reject cycles.
+  // call 鈥?subsequent calls reuse it to avoid repeated probe-and-reject cycles.
   let cachedMaxTokens: number | undefined;
 
   async function* streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
@@ -354,7 +367,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[azure-sdk] stream request failed${agentTag}: model=${config.deployment} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
+        Log.for('provider').error(`[azure-sdk] stream request failed${agentTag}: model=${config.deployment} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} 鈥?${describeErr(err)}`);
         throw formatSdkError(err, 'azure', agentTag, `endpoint=${config.endpoint} model=${config.deployment}`);
       }
     }
@@ -362,7 +375,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
       throw formatSdkError(lastErr, 'azure', agentTag, `endpoint=${config.endpoint} model=${config.deployment}`);
     }
     if (usedMax !== initialMax) {
-      Log.for('provider').warn(`[azure-sdk] max_output_tokens downgraded ${initialMax} → ${usedMax}${agentTag}`);
+      Log.for('provider').warn(`[azure-sdk] max_output_tokens downgraded ${initialMax} 鈫?${usedMax}${agentTag}`);
     }
 
     let currentToolCall: { id: string; name: string; args: string } | null = null;
@@ -446,7 +459,7 @@ function createAzureOpenAIProvider(config: ProviderConfig & { type: 'azure-opena
     };
   }
 
-  return { streamChat };
+  return { kind: config.type, streamChat };
 }
 
 function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai-compatible' }): AIProvider {
@@ -486,7 +499,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
   }
 
   function buildResponseFormat(options?: ChatOptions) {
-    // Phase 2 extraction passes jsonSchema — use json_object to force JSON
+    // Phase 2 extraction passes jsonSchema 鈥?use json_object to force JSON
     // output. We use json_object (not json_schema) because many OpenAI-compatible
     // APIs (e.g. agnes) silently return empty content when json_schema + strict
     // is used. json_object is universally supported and, combined with the
@@ -502,7 +515,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
   }
 
   // Cache the max_tokens value resolved by the ladder on first successful
-  // call — subsequent calls reuse it to avoid repeated probe-and-reject cycles.
+  // call 鈥?subsequent calls reuse it to avoid repeated probe-and-reject cycles.
   let cachedMaxTokens: number | undefined;
 
   async function* streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
@@ -510,7 +523,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
     const signal = mergeSignals(options?.signal, AbortSignal.timeout(FETCH_TIMEOUT_MS));
     Log.for('provider').info(`[openai-compat-sdk] POST${agentTag} messages=${messages.length}`);
 
-    // Phase 2 extraction (jsonSchema) does not need reasoning — reasoning models
+    // Phase 2 extraction (jsonSchema) does not need reasoning 鈥?reasoning models
     // can exhaust max_tokens in the reasoning_content channel and emit empty
     // content. Skip reasoning_effort entirely for extraction.
     const isExtraction = !!options?.jsonSchema;
@@ -552,7 +565,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[openai-compat-sdk] stream request failed${agentTag}: model=${config.model} endpoint=${config.endpoint || 'default'} messages=${messages.length} temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
+        Log.for('provider').error(`[openai-compat-sdk] stream request failed${agentTag}: model=${config.model} endpoint=${config.endpoint || 'default'} messages=${messages.length} temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} 鈥?${describeErr(err)}`);
         throw formatSdkError(err, 'openai-compat', agentTag, `endpoint=${config.endpoint || 'default'} model=${config.model}`);
       }
     }
@@ -560,7 +573,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
       throw formatSdkError(lastErr, 'openai-compat', agentTag, `endpoint=${config.endpoint || 'default'} model=${config.model}`);
     }
     if (usedMax !== initialMax) {
-      Log.for('provider').warn(`[openai-compat-sdk] max_tokens downgraded ${initialMax} → ${usedMax}${agentTag}`);
+      Log.for('provider').warn(`[openai-compat-sdk] max_tokens downgraded ${initialMax} 鈫?${usedMax}${agentTag}`);
     }
 
     let currentToolCall: { id: string; name: string; args: string } | null = null;
@@ -630,7 +643,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
     };
   }
 
-  return { streamChat };
+  return { kind: config.type, streamChat };
 }
 
 function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-responses' }): AIProvider {
@@ -650,13 +663,13 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
         for (const tc of m.toolCalls) {
           input.push({
             type: 'function_call',
-            call_id: tc.id,
-            name: tc.function.name,
-            arguments: typeof tc.function.arguments === 'string' ? tc.function.arguments : JSON.stringify(tc.function.arguments),
+            call_id: tc.id || '',
+            name: tc.function?.name || '',
+            arguments: serializeToolArguments(tc.function?.arguments),
           });
         }
-      } else if (m.role === 'tool' && m.toolCallId) {
-        input.push({ type: 'function_call_output', call_id: m.toolCallId, output: m.content || ' ' });
+      } else if (m.role === 'tool') {
+        input.push({ type: 'function_call_output', call_id: m.toolCallId || '', output: m.content || ' ' });
       } else {
         input.push({ role: m.role, content: m.content || '' });
       }
@@ -675,7 +688,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
   }
 
   // Cache the max_tokens value resolved by the ladder on first successful
-  // call — subsequent calls reuse it to avoid repeated probe-and-reject cycles.
+  // call 鈥?subsequent calls reuse it to avoid repeated probe-and-reject cycles.
   let cachedMaxTokens: number | undefined;
 
   async function* streamChat(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<StreamChunk> {
@@ -734,7 +747,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
         if (isMaxTokenLimitError(err) && i < tokenLadder.length - 1) {
           continue;
         }
-        Log.for('provider').error(`[openai-responses] stream request failed${agentTag}: model=${config.model} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} — ${describeErr(err)}`);
+        Log.for('provider').error(`[openai-responses] stream request failed${agentTag}: model=${config.model} input=${input.length} items temperature=${options?.temperature ?? 0.3} max_tokens=${maxTok} tools=${options?.tools?.length ?? 0} 鈥?${describeErr(err)}`);
         throw formatSdkError(err, 'openai-responses', agentTag, `model=${config.model}`);
       }
     }
@@ -742,7 +755,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
       throw formatSdkError(lastErr, 'openai-responses', agentTag, `model=${config.model}`);
     }
     if (usedMax !== initialMax) {
-      Log.for('provider').warn(`[openai-responses] max_output_tokens downgraded ${initialMax} → ${usedMax}${agentTag}`);
+      Log.for('provider').warn(`[openai-responses] max_output_tokens downgraded ${initialMax} 鈫?${usedMax}${agentTag}`);
     }
 
     let currentToolCall: { id: string; name: string; args: string } | null = null;
@@ -826,7 +839,7 @@ function createOpenAIResponsesProvider(config: ProviderConfig & { type: 'openai-
     };
   }
 
-  return { streamChat };
+  return { kind: config.type, streamChat };
 }
 
 const FETCH_TIMEOUT_MS = 1_800_000;

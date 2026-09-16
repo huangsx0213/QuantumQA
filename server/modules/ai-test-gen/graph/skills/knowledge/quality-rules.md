@@ -32,17 +32,11 @@ description: Load the complete review rules for the Quality Manager role (9 revi
 - Per-requirement pass: confirm each requirement's cases collectively include both a positive and a negative/boundary/error condition. If a requirement is all happy-path, you can't add a case yourself — say so in that requirement's `reviewSummary`.
 - Batch-level pass: confirm each flow step exposed in the user message has ≥1 flow condition (and flow case) referencing it. If uncovered, flag it in the coverage matrix row whose `flowStepRef` points at it.
 
-## Coverage Matrix (MANDATORY — F27, LLM is the source of truth)
-After the per-case and set-level passes, produce a `coverageMatrix` mapping EVERY Analyst condition to its coverage by the final cases. The TS layer NO LONGER recomputes this — your output is what gets stored.
+## Coverage Matrix (MANDATORY — F27)
+After the per-case and set-level passes, emit a `coverageMatrix`. You contribute **only the semantic assessment** per condition via `emit_coverage_row` — the system deterministically computes `coveredByCaseIds`, `coverageStatus`, `testLevel`, `primaryTechnique`, `category`, and the `summary` (so you do NOT emit those fields).
 
-For each `conditionId` from the Analyst's output (one row per condition, no more, no less):
-- `conditionId`, `requirementId`, `conditionType` (the "component"/"flow" field, not the old testLevel tag), `primaryTechnique`, `category` — copy EXACTLY from the Analyst's condition. For `conditionType:"flow"` rows also copy `flowStepRef` (the primary step this condition traces to).
-- `testLevel` — from the case that has this `conditionId` in `coveredConditions` (`"component"`/`"integration"`).
+For each `conditionId` from the Analyst's output (one `emit_coverage_row` per condition, no more, no less):
 - `conditionSummary` — short phrase (≤120 chars) derived from the Analyst's condition text.
-- `coveredByCaseIds` — `finalTestCases` ids whose `coveredConditions` include this `conditionId` (usually one; multiple if the Designer split a condition).
-- `coverageStatus` — `"covered"` if ≥1 case covers it, `"missing"` if none (defect — flag in `notes`).
 - `notes` — any gap or concern (e.g. "only valid partition covered, invalid missing", "integration re-asserts component behavior — moved to preconditions"). Empty if none.
 
-Plus a `summary` object aggregating ALL rows: `totalConditions`, `coveredConditions`, `missingConditions`, `byTestLevel` (e.g. `{"component":6,"integration":5}`), `byTechnique`, `byCategory`, and `byConditionType` (`{"component":6,"flow":5}` — F29, required for the UI component-vs-flow split).
-
-The matrix is the single most useful artifact for the reviewer — invest in it. Do NOT omit it. Do NOT omit the `byConditionType` summary field.
+The matrix is the single most useful artifact for the reviewer — invest in it. Do NOT omit any condition's row.

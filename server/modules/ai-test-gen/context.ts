@@ -243,16 +243,21 @@ export class ContextBuilder {
         }
       }
 
-      // Resolve model: explicit param > provider config models[0] > provider config model > deployment
+// Resolve model: explicit param > provider config models[0] > provider config model
       const resolvedModel = config.model
         || (providerConfigRow.models ? JSON.parse(providerConfigRow.models || '[]')[0] : undefined)
-        || providerConfigRow.model;
+        || providerConfigRow.model
+        || providerConfigRow.deployment;
+      // For azure-openai, the deployment drives the actual call. When the user
+      // explicitly selected a model, use it as the deployment name so intent
+      // matches execution. Fall back to the stored deployment otherwise.
+      const deployment = config.model || providerConfigRow.deployment;
 
       const provider = createAIProvider({
         type: providerConfigRow.type as any,
         endpoint: providerConfigRow.endpoint,
         apiKey: decryptApiKey(providerConfigRow.encrypted_api_key),
-        deployment: providerConfigRow.deployment,
+        deployment,
         apiVersion: providerConfigRow.api_version,
         model: resolvedModel,
         reasoningEffort: (config.reasoningEffort ?? providerConfigRow.reasoning_effort ?? undefined) as any,

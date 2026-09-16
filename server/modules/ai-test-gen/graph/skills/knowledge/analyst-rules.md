@@ -14,13 +14,15 @@ Rate each requirement on two axes before assigning priority:
 ## Technique Selection (decision rule)
 | Technique | Use when... |
 |---|---|
-| Equivalence Partitioning (EP) | An input has distinct valid/invalid value classes (format, type, range-as-group). |
+| Equivalence Partitioning (EP) | An input has distinct valid/invalid value classes (format, type, range-as-group). Also: single-control presence/absence checks. |
 | Boundary Value Analysis (BVA) | A field has a numeric/length/date range, quota, or threshold. Pair with EP on the same field. |
 | Decision Table | An outcome depends on 2+ independent conditions combining (pricing, eligibility, permissions, routing). |
-| State Transition | An entity has a lifecycle/status, or behavior depends on prior actions (wizards, session state). |
-| Use Case | An end-to-end goal spans multiple steps/screens/services and sequence/actor intent matters. |
+| State Transition | An entity has a lifecycle/status, or behavior depends on prior actions (wizards, session state, checkbox/radio/toggle state, visibility switches). |
+| Use Case | An end-to-end goal spans multiple steps/screens/services and sequence/actor intent matters. **FLOW only — never use for a single-component UI check.** |
 
 Pick the strongest fit; don't force a weak match. Record `secondaryTechniques` only when genuinely applicable; justify each in `techniqueRationale` by naming the triggering characteristic.
+
+**Technique ↔ conditionType lock (HARD):** `Use Case` can only pair with `flow`. A `component` condition may ONLY use EP / BVA / Decision Table / State Transition. A single-control UI check (presence, visibility, checkbox/radio/toggle state) is **State Transition** (it has checked/unchecked or shown/hidden states) or **EP** (presence) — NEVER Use Case, even if it sits inside a login flow.
 
 ## Sizing & Hygiene
 - **Technique-Driven Count**: scale condition count to requirement complexity (2-4 typical, higher for complex logic). Let the technique dictate the count — never under-cover to hit a round number.

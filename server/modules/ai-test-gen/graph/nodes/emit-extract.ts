@@ -3,119 +3,91 @@ import { Log } from '../../../../shared/services/logger.ts';
 import { tryExtractJson } from './json-extract.ts';
 
 // ============================================================
-// Phase 1-declare-extract: Tool Use 强制结构化输出
+// Phase 1-emit-extract: Tool Use 强制结构化输出
 // ============================================================
 
 /**
- * 从 ReAct 工具调用记录中提取 declare_case / declare_step 调用并拼装成
- * { draftTestCases: [...] } 结构，供 DesignerRuntimeSchema.parse 验证。
+ * 从 ReAct 工具调用记录中提取 emit_case 调用并拼装成 { draftTestCases: [...] }，
+ * 供 DesignerRuntimeSchema.parse 验证。
  *
- * - declare_case 提供 case 元数据（id/title/conditionId/...）
- * - declare_step 提供每步（caseId/stepNumber/verb/targetHint/data/expectation）
- * - 多个 declare_step 按 caseId 分组，按 stepNumber 升序
- * - 同一 caseId 的多次 declare_case 取最后一次（覆盖）—— 避免 LLM 重复注册
- * - 同一 (caseId, stepNumber) 的多次 declare_step 取最后一次 —— 避免 LLM 重试
- * - action 从 {verb, targetHint, data} 拼装为 `${verb} ${targetHint}` 或带 data 后缀
+ * - emit_case 一次声明一个完整 case：元数据（id/title/conditionId/...） + 内嵌 steps 数组
+ * - 同一 id 的多次 emit_case 取最后一次（覆盖）—— 支持定点修补（重复 emit 同 id）
+ * - steps 缺省 stepNumber 时按数组顺序自动编号 1,2,3…
+ * - action 从 {verb, targetHint, data} 拼装为 `verb targetHint`（或带 data 后缀）
  * - intent 从 {targetHint, data, expectation} 构造
  * - selfReview 默认填 {score:7, ...}（避免 LLM 必填 selfReview 拖慢流程）
  *
- * 返回 null 表示 LLM 没调过 declare_* 工具，或 contentText 中含有更完整的
- * JSON draft（LLM 中途弃用工具转 JSON）——此时调用方应走 Phase 1.5/2 JSON 提取。
+ * 返回 null 表示 LLM 没调过 emit_case，或 contentText 中含有更完整的 JSON draft
+ * （LLM 中途弃用工具转 JSON）——此时调用方应走 Phase 1.5/2 JSON 提取。
  */
-export function tryExtractFromDeclareTools(
+export function tryExtractFromEmitTools(
   toolCallRecords: ToolCallRecord[],
   contentText: string,
   agentName: string,
 ): Record<string, unknown> | null {
-  const declareCases = toolCallRecords.filter((r) => r.name === 'declare_case');
-  const declareSteps = toolCallRecords.filter((r) => r.name === 'declare_step');
-  if (declareCases.length === 0 && declareSteps.length === 0) return null;
-  // 必须有 declare_step（不然没有 case content）；declare_case 至少要有一个（建立 case 框架）
-  if (declareSteps.length === 0) return null;
+  const emitCases = toolCallRecords.filter((r) => r.name === 'emit_case');
+  if (emitCases.length === 0) return null;
 
-  const extractLog = Log.for(`llm:${agentName}:declare-extract`);
+  const extractLog = Log.for(`llm:${agentName}:emit-extract`);
 
-  // 关键：LLM 常在声明少数 case 后弃用工具、改用 thinking 文本 JSON 输出其余 case
-  //（实测声明 1 case + 12 个 JSON case）。若 contentText 中有更完整的 draftTestCases，
+  // 关键：LLM 常在 emit 少数 case 后弃用工具、改用 thinking 文本 JSON 输出其余 case
+  //（实测 emit 1 case + 12 个 JSON case）。若 contentText 中有更完整的 draftTestCases，
   // 工具路径构建的 draft 必然因"覆盖不全"被 validateConditionCoverage 拒绝——
   // 与其浪费一次注定失败的 parse，直接弃用工具路径，信 contentText 的完整 JSON。
   const thinkingJson = extractDraftJsonFromText(contentText);
   if (thinkingJson) {
     const jsonCaseCount = Array.isArray(thinkingJson) ? thinkingJson.length : (Array.isArray((thinkingJson as any)?.draftTestCases) ? (thinkingJson as any).draftTestCases.length : 0);
-    const declaredCaseCount = declareSteps.length > 0
-      ? new Set(declareSteps.map((s) => String((s.input as any)?.caseId ?? ''))).size
-      : 0;
-    if (jsonCaseCount > declaredCaseCount) {
-      extractLog.info(`declared ${declaredCaseCount} case(s) via tools but thinking text has ${jsonCaseCount} — LLM switched to JSON; deferring to JSON extraction`);
+    const emittedCaseCount = new Set(
+      emitCases.map((r) => String((r.input as any)?.id ?? '')).filter(Boolean),
+    ).size;
+    if (jsonCaseCount > emittedCaseCount) {
+      extractLog.info(`emitted ${emittedCaseCount} case(s) via tools but thinking text has ${jsonCaseCount} — LLM switched to JSON; deferring to JSON extraction`);
       return null;
     }
   }
 
-  extractLog.info(`declare_case=${declareCases.length}, declare_step=${declareSteps.length}`);
+  extractLog.info(`emit_case=${emitCases.length}`);
 
-  // Build case metadata map (last-write-wins for duplicates)
-  const caseMeta = new Map<string, Record<string, unknown>>();
-  for (const rec of declareCases) {
+  // Build case map (last-write-wins for duplicate ids).
+  const casesById = new Map<string, Record<string, unknown>>();
+  for (const rec of emitCases) {
     if (!rec.input || typeof rec.input !== 'object') continue;
     const id = String((rec.input as any).id ?? '').trim();
     if (!id) continue;
-    caseMeta.set(id, rec.input as Record<string, unknown>);
+    casesById.set(id, rec.input as Record<string, unknown>);
   }
 
-  // Group steps by caseId (last-write-wins for duplicate stepNumbers).
-  // declare_step 支持两种形态，此处统一扁平化：
-  //   1. 批量：input.steps = [{stepNumber?, verb, targetHint, data?, expectation?, expected?}, ...]
-  //      缺省 stepNumber 时按数组顺序自动编号 1,2,3…（推荐，一次声明整个 case）。
-  //   2. 单步（向后兼容）：input 直接含 verb/targetHint(+stepNumber)。
-  const stepsByCase = new Map<string, Map<number, Record<string, unknown>>>();
-  for (const rec of declareSteps) {
-    if (!rec.input || typeof rec.input !== 'object') continue;
-    const input = rec.input as Record<string, unknown>;
-    const caseId = String(input.caseId ?? '').trim();
-    if (!caseId) continue;
-
-    const batch = Array.isArray(input.steps) ? input.steps : [];
-    if (batch.length > 0) {
-      if (!stepsByCase.has(caseId)) stepsByCase.set(caseId, new Map());
-      batch.forEach((rawStep, idx) => {
-        if (!rawStep || typeof rawStep !== 'object') return;
-        const step = rawStep as Record<string, unknown>;
-        const autoNumber = (Number(step.stepNumber) || 0) > 0
-          ? Number(step.stepNumber)
-          : idx + 1;
-        stepsByCase.get(caseId)!.set(autoNumber, { ...step, stepNumber: autoNumber, caseId });
-      });
-    } else if (input.verb != null || input.targetHint != null) {
-      const stepNumber = Number(input.stepNumber);
-      if (Number.isFinite(stepNumber) && stepNumber > 0) {
-        if (!stepsByCase.has(caseId)) stepsByCase.set(caseId, new Map());
-        stepsByCase.get(caseId)!.set(stepNumber, input);
-      }
-    }
-  }
-
-  // If the LLM declared steps but no case metadata, fall back to a single anonymous case
   const draftTestCases: Record<string, unknown>[] = [];
-  for (const [caseId, stepMap] of stepsByCase) {
-    const meta = caseMeta.get(caseId) ?? {
-      id: caseId,
-      title: `Test case ${caseId}`,
-      conditionId: '',
-      requirementId: '',
-      priority: 'medium',
-      category: 'functional',
-      testLevel: 'component',
-      techniqueApplied: 'Equivalence Partitioning',
-    };
-    const sortedSteps = [...stepMap.values()].sort((a, b) => Number(a.stepNumber) - Number(b.stepNumber));
-    const expectedExpected = (meta.coveredConditions as string[] | undefined) ?? [];
-    const constructed = constructDraftTestCase(meta, sortedSteps, expectedExpected);
+  for (const input of casesById.values()) {
+    const steps = flattenSteps(input.steps);
+    if (steps.length === 0) continue; // 防御：schema 已强制 min 1，此处仅跳过异常
+    const expectedCovered = Array.isArray(input.coveredConditions) ? input.coveredConditions as string[] : [];
+    const constructed = constructDraftTestCase(input, steps, expectedCovered);
     draftTestCases.push(constructed);
   }
 
   if (draftTestCases.length === 0) return null;
-  extractLog.info(`built ${draftTestCases.length} draft test case(s) from declare_* tools`);
+  extractLog.info(`built ${draftTestCases.length} draft test case(s) from emit_case tools`);
   return { draftTestCases };
+}
+
+/**
+ * 将 emit_case 内嵌的 steps 数组扁平化：stepNumber 缺省时按数组顺序自动编号 1,2,3…，
+ * 并按 stepNumber 升序排序（步骤顺序稳定，不受 LLM 输出顺序影响）。
+ * 显式 stepNumber 优先（否则 auto-number 赋 idx+1）。
+ */
+function flattenSteps(rawSteps: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(rawSteps)) return [];
+  const steps: Record<string, unknown>[] = [];
+  rawSteps.forEach((rawStep, idx) => {
+    if (!rawStep || typeof rawStep !== 'object') return;
+    const step = rawStep as Record<string, unknown>;
+    const autoNumber = (Number(step.stepNumber) || 0) > 0
+      ? Number(step.stepNumber)
+      : idx + 1;
+    steps.push({ ...step, stepNumber: autoNumber });
+  });
+  return steps.sort((a, b) => Number(a.stepNumber) - Number(b.stepNumber));
 }
 
 /**
@@ -130,7 +102,7 @@ export function tryExtractFromDeclareTools(
  */
 function extractDraftJsonFromText(contentText: string): unknown[] | null {
   if (!contentText || typeof contentText !== 'string') return null;
-  const parsed = tryExtractJson(contentText);
+  const parsed = tryExtractJson(contentText, { allowTruncatedRepair: true });
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const list = (parsed as any).draftTestCases;
   if (!Array.isArray(list) || list.length === 0) return null;

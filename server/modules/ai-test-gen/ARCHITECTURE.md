@@ -157,7 +157,7 @@ Round N: LLM 思考/总结 → 无 tool calls → 结束 ReAct，转入后续 JS
 
 - 最多 15 轮（`MAX_REACT_ROUNDS`）
 - 无 tool calls 时自动退出
-- 温度：0.3（Phase 1），0（Phase 2）
+- 温度：0.5（Phase 1），0（Phase 2）
 
 ### 两阶段 JSON 提取策略
 
@@ -166,14 +166,14 @@ Phase 1: ReAct 自由输出 → tryExtractJson() → schema.parse()
   ├─ 成功 → 直接返回
   └─ 失败 → Phase 2
 
-Phase 2: schema-constrained 输出提取 → schema.parse()
+Phase 2: structured-output 提取（json_schema 或 json_object，取决于 provider）→ schema.parse()
   ├─ 成功 → 返回
   └─ 失败 → 抛出异常
 ```
 
 **为什么需要两阶段**：
 - Phase 1 需要自由分析文本和 tool calls，不适合直接强制最终结构化输出
-- Phase 2 使用 schema-constrained 输出，把前面的分析和 tool 结果整理成最终 JSON
+- Phase 2 使用 structured-output 提取（azure/openai-responses 用 json_schema，openai-compatible 用 json_object），把前面的分析和 tool 结果整理成最终 JSON
 - 即使 API 帮助约束 JSON 形状，仍然需要运行时 schema 校验和 normalize
 
 ### JSON 容错层
@@ -487,11 +487,11 @@ interface HtmlKnowledgeReference {
 | 配置 | 值 | 说明 |
 |------|---|------|
 | Agent timeout | 600s (10min) | 每个 agent 节点的最大执行时间 |
-| ReAct max rounds | 15 | 单个 agent 的最大 tool call 轮次 |
-| Phase 1 temperature | 0.3 | 平衡分析质量与稳定性 |
+| ReAct max rounds | 30 | 单个 agent 的最大 tool call 轮次 |
+| Phase 1 temperature | 0.5 | 平衡分析质量与稳定性 |
 | Phase 2 temperature | 0 | 尽量确定性输出 |
-| Phase 1 maxTokens | 32768 | ReAct 循环的 token 上限 |
-| Phase 2 maxTokens | 32768 | 提取阶段的 token 上限 |
+| max_tokens | 无固定值，走 provider ladder | `1M→500k→200k→120k→60k`（按端点容忍度降档，`infra/provider.ts` 的 `MAX_TOKEN_LADDER`） |
+| Phase 2 structured output | json_schema (azure/openai-responses) / json_object (openai-compatible) | openai-compatible 故意降级为 json_object（agnes 在 json_schema+strict 下静默返回空内容）|
 
 ## Key Files
 

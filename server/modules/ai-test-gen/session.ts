@@ -35,7 +35,6 @@ export interface BatchInput {
     previousBatchCoverageSummary?: PreviousBatchCoverageSummary[];
     relevantFlowBlueprints?: any[];
     phase: TestGenState['phase'];
-    errors: any[];
   };
 }
 
@@ -179,10 +178,6 @@ export class TestGenSession {
       globalEpicIndex: batch.inputState.globalEpicIndex,
       previousBatchCoverageSummary: batch.inputState.previousBatchCoverageSummary,
       phase: batch.inputState.phase,
-      errors: batch.inputState.errors,
-      environmentReady: false,
-      initializationLogs: [],
-      tokenBudget: { estimated: 0, limit: null },
       skillCalls: [],
       humanReviewFeedback: '',
     };
@@ -302,9 +297,6 @@ export class TestGenSession {
     // token 估算）。
     const mergedState: Record<string, unknown> = {
       ...baseInput,
-      environmentReady: true,
-      initializationLogs: [],
-      tokenBudget: { estimated: 0, limit: null },
       phase: 'analysis',
     };
 

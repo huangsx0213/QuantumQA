@@ -2,7 +2,7 @@ import type { TestGenState } from '../state';
 import type { AgentObserver, SkillDefinition } from './types';
 import type { AIProvider } from '../../infra/provider.ts';
 import { mergeSignals } from '../../infra/provider.ts';
-import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
+import { callLLMWithStructuredOutput, toSkillCallRecords, summarizeToolNames } from './utils';
 import { buildAnalystSystemPrompt, buildAnalystUserMessage } from '../prompts';
 import { buildAnalystSkills } from '../skills/skills.ts';
 import { loadComponentConditions } from '../skills/data-skills.ts';
@@ -124,7 +124,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       log.kv('latency', `${latencyMs}ms`);
       log.kv('techniques', JSON.stringify(techniqueBreakdown));
       if (skillCallCount > 0) {
-        log.kv('skill.details', toolCallRecords!.map(tc => `${tc.name}(completed)`).join(', '));
+        log.kv('skill.details', summarizeToolNames(toolCallRecords!.map(tc => `${tc.name}(completed)`)));
       }
       observer?.onComplete?.(agentName, usage, latencyMs, messages, validated);
 

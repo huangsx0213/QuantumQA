@@ -157,11 +157,6 @@ export const TestGenStateAnnotation = Annotation.Root({
 
   
 
-  // === Preparation Outputs ===
-  environmentReady: Annotation<boolean>,
-  initializationLogs: Annotation<string[]>,
-  tokenBudget: Annotation<{ estimated: number; limit: number | null }>,
-
   // === Test Analyst Outputs ===
   requirementAnalysis: Annotation<{ overallApproach: string; riskAssessmentSummary: string } | undefined>,
   testConditions: Annotation<TestConditionContract[] | undefined>,
@@ -198,7 +193,6 @@ export const TestGenStateAnnotation = Annotation.Root({
 
   // === Phase Tracking ===
   phase: Annotation<Phase>,
-  errors: Annotation<{ phase: string; agent: string; step: string; message: string; rawResponse?: string; timestamp: number }[]>,
 });
 
 export type TestGenState = typeof TestGenStateAnnotation.State;

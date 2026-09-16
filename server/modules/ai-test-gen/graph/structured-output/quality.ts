@@ -5,6 +5,8 @@ import {
   type CoverageMatrixContract,
 } from 'shared/recording/agent-contracts.ts';
 import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
+import { tryExtractJson } from '../nodes/json-extract.ts';
+import type { ToolCallRecord } from '../nodes/types.ts';
 import {
   arrayFromRecordValues,
   coerceNumber,
@@ -17,6 +19,7 @@ import {
   nullToUndefined,
 } from './helpers.ts';
 import type { StructuredOutputProfile } from './profile.ts';
+import { throwRepairGap } from './repair-plan.ts';
 import { Log } from '../../../../shared/services/logger.ts';
 
 // F19: step atomicity hard constraint — keep `expected` to a single observable
@@ -111,6 +114,33 @@ interface ExpectedDraftCase {
   referencedComponentConditions?: string[];
 }
 
+/**
+ * Full draft case — Quality merges its emit_review verdicts onto these to
+ * produce finalTestCases (Mode A). The coverage-check fields (id/conditionId/
+ * requirementId/expectedTestLevel/coveredConditions/referencedComponentConditions)
+ * are also used by validateDraftCaseCoverage; the remaining fields are needed
+ * only for Mode A merge and are optional so the coverage-only call sites
+ * (tests, legacy) keep working. `testLevel` (draft field name) aliases
+ * `expectedTestLevel` (coverage-check name).
+ */
+export interface QualityDraftCase {
+  id: string;
+  conditionId: string;
+  requirementId: string;
+  expectedTestLevel?: 'component' | 'integration';
+  coveredConditions?: string[];
+  referencedComponentConditions?: string[];
+  title?: string;
+  priority?: string;
+  category?: string;
+  testLevel?: 'component' | 'integration';
+  techniqueApplied?: string;
+  preconditions?: string[];
+  testData?: string[];
+  steps?: Array<{ stepNumber: number; action: string; expected: string; intent?: unknown }>;
+  tags?: string[];
+}
+
 function validateDraftCaseCoverage(
   parsed: QualityRuntimeOutput,
   expectedDraftCases: ExpectedDraftCase[],
@@ -127,44 +157,49 @@ function validateDraftCaseCoverage(
   const allowedReferencedConditionIds = new Set(
     expectedDraftCases.flatMap((draftCase) => draftCase.referencedComponentConditions ?? []),
   );
+  // F15 degrade-trigger: if NO draft case references any component condition,
+  // the batch likely has no component conditions available (flow-only batch with
+  // out-of-scope components). Rejecting empty referencedComponentConditions in that
+  // case would force an unsatisfiable loop.
+  const hasReferencableComponentConditions = allowedReferencedConditionIds.size > 0;
   const seenCaseIds = new Set<string>();
 
   for (const testCase of parsed.finalTestCases) {
     if (seenCaseIds.has(testCase.id)) {
-      throw new z.ZodError([
+      throwRepairGap(new z.ZodError([
         {
           code: 'custom',
           path: ['finalTestCases'],
           message: `Duplicate final test case id: ${testCase.id}`,
           input: testCase,
         },
-      ]);
+      ]), { type: 'identity-mismatch', entityId: testCase.id, field: 'id', fix: `rename this case to a unique id (duplicate: ${testCase.id})` });
     }
     seenCaseIds.add(testCase.id);
 
     if (!expectedById.has(testCase.id)) {
-      throw new z.ZodError([
+      throwRepairGap(new z.ZodError([
         {
           code: 'custom',
           path: ['finalTestCases'],
           message: `Final reviewed case ${testCase.id} does not match any input draft case id`,
           input: testCase,
         },
-      ]);
+      ]), { type: 'identity-mismatch', entityId: testCase.id, field: 'id', fix: 'use an existing draft case id' });
     }
   }
 
   for (const testCase of parsed.finalTestCases) {
     const expected = expectedById.get(testCase.id)!;
     if (testCase.conditionId !== expected.conditionId || testCase.requirementId !== expected.requirementId) {
-      throw new z.ZodError([
+      throwRepairGap(new z.ZodError([
         {
           code: 'custom',
           path: ['finalTestCases'],
           message: `Final reviewed case ${testCase.id} changed conditionId or requirementId`,
           input: testCase,
         },
-      ]);
+      ]), { type: 'identity-mismatch', entityId: testCase.id, field: 'conditionId/requirementId', fix: 'restore the original conditionId and requirementId from the draft case' });
     }
     for (const [field, allowedIds] of [
       ['coveredConditions', allowedCoveredConditionIds],
@@ -173,47 +208,52 @@ function validateDraftCaseCoverage(
       const missingTraceabilityIds = (expected[field] ?? [])
         .filter((id) => !testCase[field].includes(id));
       if (missingTraceabilityIds.length > 0) {
-        throw new z.ZodError([
+        throwRepairGap(new z.ZodError([
           {
             code: 'custom',
             path: ['finalTestCases'],
             message: `Final reviewed case ${testCase.id} dropped ${field} IDs: ${missingTraceabilityIds.join(', ')}`,
             input: testCase,
           },
-        ]);
+        ]), { type: 'bad-reference', entityId: testCase.id, field, badValue: missingTraceabilityIds.join(', '), fix: `restore the dropped ${field} IDs: ${missingTraceabilityIds.join(', ')}` });
       }
       const foreignTraceabilityIds = testCase[field].filter((id) => !allowedIds.has(id));
       if (foreignTraceabilityIds.length > 0) {
-        throw new z.ZodError([
+        throwRepairGap(new z.ZodError([
           {
             code: 'custom',
             path: ['finalTestCases'],
             message: `Final reviewed case ${testCase.id} added FOREIGN ${field} IDs: ${foreignTraceabilityIds.join(', ')}`,
             input: testCase,
           },
-        ]);
+        ]), { type: 'bad-reference', entityId: testCase.id, field, badValue: foreignTraceabilityIds.join(', '), fix: `remove the foreign ${field} IDs: ${foreignTraceabilityIds.join(', ')}` });
       }
     }
     if (expected.expectedTestLevel && testCase.testLevel !== expected.expectedTestLevel) {
-      throw new z.ZodError([
+      throwRepairGap(new z.ZodError([
         {
           code: 'custom',
           path: ['finalTestCases'],
           message: `Final reviewed case ${testCase.id} has testLevel="${testCase.testLevel}" but the Designer assigned testLevel="${expected.expectedTestLevel}". Quality MUST NOT change testLevel — restore it to "${expected.expectedTestLevel}".`,
           input: testCase,
         },
-      ]);
+      ]), { type: 'wrong-value', entityId: testCase.id, field: 'testLevel', badValue: testCase.testLevel, fix: `restore testLevel to "${expected.expectedTestLevel}"` });
     }
     // F15: integration cases must still declare referencedComponentConditions.
-    if (testCase.testLevel === 'integration' && testCase.referencedComponentConditions.length === 0) {
-      throw new z.ZodError([
+    // Degrade: matches Designer's F11 — when the batch has NO component conditions to
+    // reference at all (e.g. only flow conditions were produced), an empty list is
+    // legitimate, not a defect — forcing a value would drive an infinite repair loop.
+    if (testCase.testLevel === 'integration'
+      && testCase.referencedComponentConditions.length === 0
+      && hasReferencableComponentConditions) {
+      throwRepairGap(new z.ZodError([
         {
           code: 'custom',
           path: ['finalTestCases'],
           message: `Final reviewed case ${testCase.id} is testLevel="integration" but referencedComponentConditions is empty. Integration cases must explicitly name the component conditions they assume as preconditions.`,
           input: testCase,
         },
-      ]);
+      ]), { type: 'missing-entity', entityId: testCase.id, field: 'referencedComponentConditions', fix: 'list the component-typed condition ids this integration case assumes as preconditions' });
     }
   }
 
@@ -221,14 +261,14 @@ function validateDraftCaseCoverage(
     .map((draftCase) => draftCase.id)
     .filter((draftCaseId) => !seenCaseIds.has(draftCaseId));
   if (missingIds.length > 0) {
-    throw new z.ZodError([
+    throwRepairGap(new z.ZodError([
       {
         code: 'custom',
         path: ['finalTestCases'],
         message: `Missing final reviewed cases for draft case ids: ${missingIds.join(', ')}`,
         input: parsed,
       },
-    ]);
+    ]), { type: 'missing-entity', entityId: missingIds.join(','), field: 'finalTestCases', fix: `emit a final review for each missing draft case: ${missingIds.join(', ')}` });
   }
 
   return parsed;
@@ -460,9 +500,19 @@ function normalizeCoverageMatrix(raw: Record<string, unknown>): Record<string, u
   return normalized;
 }
 
-export function createQualityOutputProfile(expectedDraftCases: ExpectedDraftCase[] = []): StructuredOutputProfile<QualityRuntimeOutput> {
+export function createQualityOutputProfile(draftCases: QualityDraftCase[] = []): StructuredOutputProfile<QualityRuntimeOutput> {
+  const expectedDraftCases: ExpectedDraftCase[] = draftCases.map((d) => ({
+    id: d.id,
+    conditionId: d.conditionId,
+    requirementId: d.requirementId,
+    expectedTestLevel: d.testLevel ?? d.expectedTestLevel,
+    coveredConditions: d.coveredConditions ?? [],
+    referencedComponentConditions: d.referencedComponentConditions ?? [],
+  }));
   return {
     toolSchema: makeSchemaOpenAICompatible(zodToJsonSchema(QualityRuntimeSchema)),
+    emitExtract: (toolCallRecords, contentText, agentName) =>
+      tryExtractQualityFromEmitTools(toolCallRecords, contentText, draftCases, agentName),
     shouldAttemptPhase1Extraction(raw: unknown): boolean {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
       const obj = raw as Record<string, unknown>;
@@ -548,9 +598,10 @@ export function reconcileCoverageMatrix(
   finalTestCases: QualityRuntimeOutput['finalTestCases'],
   conditions: ReconcileCondition[],
 ): CoverageMatrixContract {
-  // 早退：无条件或矩阵缺失时原样返回（下游按未填充处理）；类型上标记为契约，
-  // 因为正常路径 reconcile 总是填充 testLevel。
-  if (!llmMatrix || !conditions.length) return llmMatrix as unknown as CoverageMatrixContract;
+  // 早退：无条件时返回空矩阵。LLM 未输出 coverageMatrix 时不应早退
+  // ——TS 层仍需从 finalTestCases 确定性计算覆盖矩阵。
+  if (!conditions.length) return { rows: [], summary: { totalConditions: 0, coveredConditions: 0, missingConditions: 0, byTestLevel: {}, byTechnique: {}, byCategory: {} } } as any;
+  const llmRows = llmMatrix?.rows ?? [];
 
   // Build conditionId → testCaseIds mapping from finalTestCases
   const caseIdsByCondition = new Map<string, string[]>();
@@ -566,7 +617,7 @@ export function reconcileCoverageMatrix(
 
   // Build LLM row lookup (for notes, conditionSummary, flowStepRef)
   const llmRowByCond = new Map<string, any>();
-  for (const row of llmMatrix.rows ?? []) {
+  for (const row of llmRows) {
     llmRowByCond.set(row.conditionId, row);
   }
 
@@ -618,4 +669,126 @@ export function reconcileCoverageMatrix(
       byConditionType,
     },
   } as any;
+}
+
+// ============================================================
+// Mode A emit-extract — emit_review + emit_coverage_row → raw
+// ============================================================
+
+/**
+ * 从 ReAct 工具调用记录中收集 Quality 的 emit_review / emit_coverage_row 调用，
+ * 拼装成 { finalTestCases, coverageMatrix }（待 QualityRuntimeSchema 校验的 raw）。
+ *
+ * - emit_review 是 patch：final case = draft case（剥 selfReview/postconditions）
+ *   + { status, reviewSummary, changeLog }，仅在 LLM 显式给出 steps/testData 时整体替换。
+ *   未 review 的 draft case 默认 status=approved + 空 changeLog（覆盖语义由 validateDraftCaseCoverage 兜底校验完整性）。
+ * - emit_coverage_row 只提供 conditionSummary/notes；coveredByCaseIds/coverageStatus/
+ *   testLevel/primaryTechnique/category/summary 由 reconcileCoverageMatrix 确定性命中，
+ *   这里仅给占位值（parse 阶段 schema 通过，节点层 reconcile 重算）。
+ * - 同一 caseId/conditionId 多次 emit，后写覆盖前写。
+ *
+ * 返回 null 表示未走 emit 路径（无 emit_review/emit_coverage_row），或 contentText 中
+ * 已有更完整的 finalTestCases JSON（LLM 弃用工具转 JSON）→ 调用方回退 JSON 提取。
+ */
+function tryExtractQualityFromEmitTools(
+  toolCallRecords: ToolCallRecord[],
+  contentText: string,
+  draftCases: QualityDraftCase[],
+  agentName: string,
+): Record<string, unknown> | null {
+  const reviews = toolCallRecords.filter((r) => r.name === 'emit_review');
+  const coverageRows = toolCallRecords.filter((r) => r.name === 'emit_coverage_row');
+  if (reviews.length === 0 && coverageRows.length === 0) return null;
+
+  const extractLog = Log.for(`llm:${agentName}:emit-extract`);
+
+  // LLM 弃用工具转 JSON：contentText 里有更完整的 finalTestCases → defer。
+  const jsonCases = countFinalTestCasesInText(contentText);
+  if (jsonCases > draftCases.length && jsonCases > 0) {
+    extractLog.info(`emitted ${reviews.length} review(s) but thinking text has ${jsonCases} final cases — LLM switched to JSON; deferring`);
+    return null;
+  }
+
+  extractLog.info(`emit_review=${reviews.length}, emit_coverage_row=${coverageRows.length}`);
+
+  // last-write-wins by caseId
+  const reviewByCase = new Map<string, Record<string, unknown>>();
+  for (const rec of reviews) {
+    if (!rec.input || typeof rec.input !== 'object') continue;
+    const caseId = String((rec.input as any).caseId ?? '').trim();
+    if (caseId) reviewByCase.set(caseId, rec.input as Record<string, unknown>);
+  }
+
+  const finalTestCases: Record<string, unknown>[] = draftCases.map((draft) => {
+    const base: Record<string, unknown> = {
+      id: draft.id,
+      title: draft.title ?? `Case ${draft.id}`,
+      conditionId: draft.conditionId,
+      requirementId: draft.requirementId,
+      coveredConditions: draft.coveredConditions ?? [],
+      referencedComponentConditions: draft.referencedComponentConditions ?? [],
+      priority: draft.priority ?? 'medium',
+      category: draft.category ?? 'functional',
+      testLevel: draft.testLevel ?? draft.expectedTestLevel ?? 'component',
+      techniqueApplied: draft.techniqueApplied ?? 'Equivalence Partitioning',
+      preconditions: draft.preconditions ?? [],
+      testData: draft.testData ?? [],
+      steps: draft.steps ?? [],
+      tags: draft.tags ?? [],
+    };
+    const review = reviewByCase.get(draft.id);
+    if (!review) {
+      return { ...base, status: 'approved', reviewSummary: 'No changes required.', changeLog: [] };
+    }
+    return {
+      ...base,
+      status: review.status,
+      reviewSummary: review.reviewSummary,
+      changeLog: Array.isArray(review.changeLog) ? review.changeLog : [],
+      ...(Array.isArray(review.steps) ? { steps: review.steps } : {}),
+      ...(Array.isArray(review.testData) ? { testData: review.testData } : {}),
+    };
+  });
+
+  // last-write-wins by conditionId
+  const rowByCond = new Map<string, Record<string, unknown>>();
+  for (const rec of coverageRows) {
+    if (!rec.input || typeof rec.input !== 'object') continue;
+    const cid = String((rec.input as any).conditionId ?? '').trim();
+    if (cid) rowByCond.set(cid, rec.input as Record<string, unknown>);
+  }
+
+  const rows = [...rowByCond.values()].map((r) => ({
+    conditionId: String(r.conditionId ?? ''),
+    conditionSummary: String(r.conditionSummary ?? ''),
+    requirementId: '',
+    testLevel: 'component',
+    primaryTechnique: '',
+    category: '',
+    coveredByCaseIds: [],
+    coverageStatus: 'missing',
+    notes: String(r.notes ?? ''),
+  }));
+
+  const coverageMatrix = {
+    rows,
+    summary: {
+      totalConditions: rows.length,
+      coveredConditions: 0,
+      missingConditions: rows.length,
+      byTestLevel: {} as Record<string, number>,
+      byTechnique: {} as Record<string, number>,
+      byCategory: {} as Record<string, number>,
+    },
+  };
+
+  return { finalTestCases, coverageMatrix };
+}
+
+function countFinalTestCasesInText(contentText: string): number {
+  if (!contentText || typeof contentText !== 'string') return 0;
+  const parsed = tryExtractJson(contentText, { allowTruncatedRepair: true });
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 0;
+  const list = (parsed as any).finalTestCases;
+  return Array.isArray(list) ? list.length : 0;
 }

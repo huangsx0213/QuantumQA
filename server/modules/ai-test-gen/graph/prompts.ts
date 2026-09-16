@@ -379,14 +379,34 @@ ${availableTools}
 
 ${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback}` : ''}
 
-## Output Format
-Stream your analysis as plain text in markdown. End with a single JSON code block containing the COMPLETE structured output. Do NOT add any text after this block.
+## Output Format — ONE of TWO Modes (MANDATORY — never mix)
 
+**Mode A (preferred) — Tool-Use Structured Output.** Call \`emit_analysis\` ONCE (\`overallApproach\` + \`riskAssessmentSummary\`), then for EACH derived condition call \`emit_condition\` with all its fields. The system assembles \`{ requirementAnalysis, testConditions }\` automatically — do NOT emit a JSON block.
+
+**Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end. **Prefer Mode A: Mode B skips the emit tool's enum protection, so any violation costs a whole-batch re-extraction (most expensive, most truncation-prone).**
+
+**FENCELINE: pick one mode before the first tool call. ANY \`emit_\` call locks you into Mode A. If you made NO \`emit_\` call, emit one complete JSON block (Mode B).**
+
+### Mode A workflow — batch all conditions
+1. \`emit_analysis({ overallApproach, riskAssessmentSummary })\` — once.
+2. For EACH condition: \`emit_condition({ id, requirementId, condition, conditionType, flowStepRefs, category, priority, riskLevel, primaryTechnique, secondaryTechniques, techniqueRationale, coverageDimensions, dependencies, ... })\`.
+3. exit ReAct after the last \`emit_condition\`.
+
+**Tool-enforced rules (API rejects violations):** \`conditionType\` is a closed enum (\`component\` | \`flow\`); flow conditions require non-empty \`flowStepRefs\`.
+
+### Example — Mode A (mixed mode)
+\`\`\`
+emit_analysis({ overallApproach: "...", riskAssessmentSummary: "..." })
+emit_condition({ id: "C-001", requirementId: "STORY-001", condition: "Verify that ...", conditionType: "component", flowStepRefs: [], category: "error", priority: "high", riskLevel: "high", primaryTechnique: "Equivalence Partitioning", secondaryTechniques: [], techniqueRationale: "...", coverageDimensions: ["..."], dependencies: [] })
+emit_condition({ id: "C-002", requirementId: "FLOW-STORY-001", condition: "Verify that ...", conditionType: "flow", flowStepRefs: [{ "flowId": "FLOW-1", "sequence": 1, "actionSummary": "..." }], category: "integration", priority: "critical", riskLevel: "critical", primaryTechnique: "Use Case Testing", secondaryTechniques: ["State Transition Testing"], techniqueRationale: "...", coverageDimensions: ["..."], dependencies: ["C-001"] })
+\`\`\`
+
+### Mode B JSON shape (fallback)
 \`\`\`json
 ${outputExample}
 \`\`\`
 
-The \`\`\`json block must be at the very end — nothing after it. An empty object \`{}\` is always invalid.
+The \`\`\`json block must be at the very end — nothing after it. An empty object \`{}\` is always invalid. In Mode A, exit only after the last \`emit_condition\`.
 `;
 }
 
@@ -554,13 +574,10 @@ For EACH condition, call **requirement_detail_query** with its \`requirementId\`
 Call **istqb_guide** once — loading all technique guides AND the Integration Testing test-level guide. Do not skip this even if you already "know" the techniques; the guide enforces the method, not just the name.
 
 ### Step 2.5 — Load detailed rules (MANDATORY)
-Call **designer_rules** to load the complete test case design rules. You MUST load these before designing any test cases.
+Call **designer_rules** to load the complete test case design rules (step atomicity, technique fidelity, test level decision, F12/F18/F31/F32, evidence grounding). You MUST load these before designing any test cases.
 
 ### Step 3 — Design test cases
 Apply the rules below. Decide \`testLevel\` per case using the Test Level Decision Rule.
-
-## Detailed Rules (MANDATORY — load before designing)
-Call **designer_rules** before designing any test cases. The schema-critical rules you must NOT violate are inlined below.
 
 ## Required Fields
 For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`title\`, \`conditionId\`, \`requirementId\`, \`coveredConditions\`, \`referencedComponentConditions\` (integration only), \`priority\`, \`category\`, \`testLevel\`, \`techniqueApplied\`, \`preconditions\`, \`testData\`, \`steps\` (each step carrying a mandatory \`intent\` object — see "step intent"), \`postconditions\`, \`tags\`, \`selfReview\`. Field rules are enforced in Strict Schema Constraints below. Do not end your analysis until you have described at least one complete test case for extraction.
@@ -568,62 +585,16 @@ For EVERY object in \`draftTestCases\`, these fields are mandatory: \`id\`, \`ti
 ## Strict Schema Constraints (HARD — schema will REJECT violations)
 These constraints are enforced by the Zod schema at parse time. Violations cause Phase 2 retries and may fail the entire pipeline after 3 attempts.
 
-### testData format
-\`testData\` MUST be an array of **plain strings**. Do NOT nest arrays or objects inside it.
-- WRONG: \`"testData": ["username = admin", ["role1", "role2"]]\` (nested array)
-- WRONG: \`"testData": ["username = admin", { "key": "value" }]\` (nested object)
-- RIGHT: \`"testData": ["username = admin", "roles = role1, role2"]\` (flat strings)
+### testData / testLevel / coveredConditions
+\`testData\` flat strings · \`testLevel\` ∈ {\`"component"\`, \`"integration"\`} · \`coveredConditions\` non-empty (include the primary \`conditionId\`) — full format in **designer_rules** (F32 · Test Level Decision Rule); the \`emit_case\` schema enforces these at call time.
 
-### testLevel values
-\`testLevel\` must be exactly \`"component"\` or \`"integration"\` — **lowercase only**. \`"Component"\`, \`"Integration"\`, \`"COMPONENT"\` will be rejected.
-
-### coveredConditions
-\`coveredConditions\` MUST be a non-empty array containing at least the primary \`conditionId\`. If you are unsure what to put, use \`[conditionId]\`. An empty array \`[]\` is invalid.
-
-### referencedComponentConditions (integration cases only)
-\`referencedComponentConditions\` must contain **real condition IDs** that exist in the input. You have two valid options:
-
-**Option A (preferred):** Use the plain condition ID from the input conditions list (e.g., \`"C-001"\`, \`"C-007"\`). These are the exact IDs the Analyst assigned to component-typed conditions.
-
-**Option B:** If the input contains \`availableComponentConditions\`, copy their \`referenceId\` value **verbatim**. Do NOT construct your own — the \`referenceId\` is pre-built and must be copied as-is.
-
-NEVER fabricate IDs. The ID must exist in the input — either as a condition ID or as a \`referenceId\`. Fabricated IDs will be rejected by the schema.
-
-WRONG (fabricated — uses flow ID \`F-001\` instead of condition ID \`C-001\`):
-\`\`\`
-"referencedComponentConditions": ["component:req-aut-auth-session-happy:F-001"]
-\`\`\`
-RIGHT (use the real condition ID from the input):
-\`\`\`
-"referencedComponentConditions": ["C-001"]
-\`\`\`
-
-Only **component-typed** condition IDs are valid here — never flow-typed condition IDs. If a condition is flow-typed, put it in \`coveredConditions\` instead.
-
-### expected field (step atomicity)
-Each step's \`expected\` field must contain a **single assertion** — no semicolons (\`;\` or \`；\`) joining multiple assertions. This is the most common schema violation. The LLM frequently joins two related outcomes with a semicolon — the schema will REJECT this every time and Phase 2 retries will fail.
-
-WRONG (semicolon joins two assertions — will be REJECTED):
-\`\`\`
-{ "stepNumber": 3, "action": "Click the Submit button.", "expected": "The form is NOT submitted; no network request to auth API is observed." }
-\`\`\`
-RIGHT (split into two steps — one assertion each):
-\`\`\`
-{ "stepNumber": 3, "action": "Click the Submit button.", "expected": "The form is not submitted." }
-{ "stepNumber": 4, "action": "Observe the browser network tab.", "expected": "No network request to the auth API endpoint is observed." }
-\`\`\`
-
-**Rule: if your \`expected\` value contains a semicolon (\`;\` or \`；\`), it is WRONG. Split the step into multiple steps.**
+### referencedComponentConditions / expected atomicity
+Use **real condition IDs only** (component-typed for \`referencedComponentConditions\`, never fabricated) and keep each step's \`expected\` a **single assertion** (no semicolons) — see **designer_rules** (Test Level Decision Rule + Step Atomicity). The schema still rejects fabricated IDs and semicolon-joined expectations.
 
 ### action field (step atomicity + verb-first)
 Each step's \`action\` is a **single operation** that **starts with a vocabulary verb** (the closed list below). The machine parses the action's verb directly — no separate actionType field. CamelCase verbs may be written space-separated: \`waitFor\` → "wait for the network response"; \`switchTo\` → "switch to frame ...".
 
-Forbidden compound patterns:
-- \`"while <gerund>"\` (e.g. "fill the password field while leaving the username empty")
-- \`", then"\` (e.g. "fill the username field, then click submit")
-- \`"but leave/without"\` (e.g. "fill the username field but leave the password empty")
-- \`"both"\` (e.g. "verify both username and password fields are empty")
-Split these into separate steps — one action per step.
+Forbidden compound patterns (\`while <gerund>\` / \`, then\` / \`but leave/without\` / \`both\`) must be split into separate steps — see **designer_rules** (Step Atomicity).
 
 ### step intent (structured vocabulary — data & expectation only)
 Every step carries an \`intent\` object with the machine-readable data and expected outcome. The **action verb lives in the \`action\` text itself, NOT in intent**.
@@ -684,29 +655,27 @@ FORBIDDEN: \`transient\` (loading states, animations, focus — rewrite as an ob
 - **flow_detail_query(flowId)**: flow details — single ID or array.
 - **istqb_guide(techniques?, context?)**: ISTQB technique + test-level guides. Omit \`techniques\` to load all.
 - **designer_rules**: load detailed design rules (step atomicity, technique fidelity, test level, F12, F18, F31, F32). Call before designing.
-- **declare_case(...)**: register a test case's metadata BEFORE its steps. See "Output Format" below.
-- **declare_step(...)**: declare ONE step (verb + targetHint + data/expectation). See "Output Format" below.
+- **emit_case(...)**: emit ONE complete test case (metadata + its entire steps array) in a single call. See "Output Format" below.
 
 ${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback}` : ''}
 
 ## Output Format — ONE of TWO Modes (MANDATORY — never mix)
 Choose **one** mode for ALL cases in this batch; mixing is rejected as incomplete coverage.
 
-**Mode A (preferred) — Tool-Use Structured Output.** Declare EVERY case and EVERY step via \`declare_case\` + \`declare_step\` tool calls, for ALL cases, ALL steps — no exceptions. The tools' \`verb\` is a closed enum (API rejects any non-vocabulary verb at call time), which eliminates the most common Phase 2 retry cause.
+**Mode A (preferred) — Tool-Use Structured Output.** Emit EVERY case via one \`emit_case\` tool call per case (metadata + entire steps array), for ALL cases, ALL steps — no exceptions. The tool's \`verb\` is a closed enum (API rejects any non-vocabulary verb at call time), which eliminates the most common Phase 2 retry cause.
 
-**Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end (all cases, all steps). Semantic correctness of \`action\`/\`intent\`/\`data\`/\`expectation\` is your responsibility — the schema still rejects violations.
+**Mode B (fallback) — Single JSON block.** Only if you cannot use the tool, emit ONE complete \`\`\`json\`\`\` block at the very end (all cases, all steps). Semantic correctness of \`action\`/\`intent\`/\`data\`/\`expectation\` is your responsibility — the schema still rejects violations. **Prefer Mode A: Mode B skips the emit tool's enum protection, so any violation costs a whole-batch re-extraction (most expensive, most truncation-prone).**
 
-**FENCELINE: pick one mode before the first tool call. ANY \`declare_\` call locks you into Mode A — complete every step via tools (NO JSON block). If you made NO \`declare_\` call, emit one complete JSON block (Mode B).**
+**FENCELINE: pick one mode before the first tool call. ANY \`emit_case\` call locks you into Mode A — complete every case via the tool (NO JSON block). If you made NO \`emit_case\` call, emit one complete JSON block (Mode B).**
 
 ### Mode A workflow — BATCH ALL REMAINING CASES IN ONE ROUND:
-Per case: one \`declare_case\` call + one \`declare_step\` call carrying the case's ENTIRE \`steps\` array (omit \`stepNumber\` — auto-numbers 1,2,3…).
+Per case: ONE \`emit_case\` call carrying the case's metadata AND its ENTIRE \`steps\` array (omit \`stepNumber\` — auto-numbers 1,2,3…).
 
-**HARD RULE — declare EVERY remaining case in a SINGLE tool-call round.** In the round where you start declaring cases, emit ALL pending cases back-to-back as parallel tool calls (declare_case + declare_step pairs for every case), NOT one case per round. Declaring one case per round balloons rounds 30× and re-sends the whole history every time — the #1 token waste. Example: 15 conditions → 15 declare_case + 15 declare_step calls in ONE round, then exit.
+**HARD RULE — emit EVERY remaining case in a SINGLE tool-call round.** In the round where you start emitting cases, emit ALL pending cases back-to-back as parallel tool calls (one \`emit_case\` per case), NOT one case per round. Emitting one case per round balloons rounds 30× and re-sends the whole history every time — the #1 token waste. Example: 15 conditions → 15 \`emit_case\` calls in ONE round, then exit.
 
 Steps:
-1. For EACH case: call \`declare_case\` (id, title, conditionId, requirementId, testLevel, techniqueApplied, preconditions, testData, coveredConditions, referencedComponentConditions, priority, category, postconditions, tags).
-2. Immediately after, call \`declare_step\` with that case's ENTIRE \`steps\` array. Each step entry: \`verb\` (vocabulary enum), \`targetHint\`, \`data\` (REQUIRED for fill/select/navigate/upload/press), \`expectation\` (REQUIRED for verify/waitFor), optional \`expected\`.
-3. Repeat pairs for EVERY remaining case IN THE SAME ROUND (parallel calls). **exit ReAct only after the LAST case's LAST step is declared — ideally the same round you started.**
+1. For EACH case: call \`emit_case\` with its metadata (id, title, conditionId, requirementId, testLevel, techniqueApplied, preconditions, testData, coveredConditions, referencedComponentConditions, priority, category, postconditions, tags) AND its ENTIRE \`steps\` array. Each step entry: \`verb\` (vocabulary enum), \`targetHint\`, \`data\` (REQUIRED for fill/select/navigate/upload/press), \`expectation\` (REQUIRED for verify/waitFor), optional \`expected\`.
+2. Repeat one \`emit_case\` for EVERY remaining case IN THE SAME ROUND (parallel calls). **exit ReAct only after the LAST case is emitted — ideally the same round you started.**
 
 **Tool-enforced rules (API rejects violations):**
 - \`verb\` ∈ closed enum: \`navigate, fill, clear, select, press, click, doubleClick, rightClick, hover, drag, toggle, check, uncheck, upload, scroll, switchTo, dialog, waitFor, verify, extract\`. NO \`enter\`/\`type\`/\`submit\`/\`ensure\`/\`observe\`/\`check that\`/\`make sure\`/\`go to\`/\`choose\`.
@@ -715,12 +684,11 @@ Steps:
 
 **Action sentence** is reconstructed as \`\${verb} \${targetHint}\` (+ \` with '\${data}'\` when present); expected outcome captured as \`expectation\`.
 
-### Example — Mode A: declaring two cases via tools (batch declare_step)
+### Example — Mode A: emitting two cases via the tool
 For \`C-002\` (integration login) and \`C-001\` (component validation), your tool calls look like:
 
 \`\`\`
-declare_case({ id: "TC-001", title: "End-to-end login: admin credentials propagate from auth API to session store and dashboard", conditionId: "C-002", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-002"], referencedComponentConditions: ["C-001", "C-003"], priority: "critical", category: "functional", testLevel: "integration", techniqueApplied: "Use Case Testing", preconditions: ["User is on the login page", "Administrator account exists and is active (per C-001)"], testData: ["username = admin (valid partition)", "password = admin123 (valid partition)"] })
-declare_step({ caseId: "TC-001", steps: [
+emit_case({ id: "TC-001", title: "End-to-end login: admin credentials propagate from auth API to session store and dashboard", conditionId: "C-002", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-002"], referencedComponentConditions: ["C-001", "C-003"], priority: "critical", category: "functional", testLevel: "integration", techniqueApplied: "Use Case Testing", preconditions: ["User is on the login page", "Administrator account exists and is active (per C-001)"], testData: ["username = admin (valid partition)", "password = admin123 (valid partition)"], steps: [
   { verb: "fill",    targetHint: "username input field",  data: "admin" },
   { verb: "fill",    targetHint: "password input field",  data: "admin123" },
   { verb: "click",   targetHint: "Sign in button" },
@@ -729,8 +697,7 @@ declare_step({ caseId: "TC-001", steps: [
   { verb: "verify",  targetHint: "dashboard greeting",    expectation: { kind: "text-visible", value: "Welcome back, Admin!" } }
 ] })
 
-declare_case({ id: "TC-002", title: "Reject login with invalid password format", conditionId: "C-001", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-001"], referencedComponentConditions: [], priority: "high", category: "error", testLevel: "component", techniqueApplied: "Equivalence Partitioning", preconditions: ["User is on the login page"], testData: ["password = weakpass123 (invalid partition)"] })
-declare_step({ caseId: "TC-002", steps: [
+emit_case({ id: "TC-002", title: "Reject login with invalid password format", conditionId: "C-001", requirementId: "req-aut-auth-login-valid-success", coveredConditions: ["C-001"], referencedComponentConditions: [], priority: "high", category: "error", testLevel: "component", techniqueApplied: "Equivalence Partitioning", preconditions: ["User is on the login page"], testData: ["password = weakpass123 (invalid partition)"], steps: [
   { verb: "fill",   targetHint: "username input field", data: "admin" },
   { verb: "fill",   targetHint: "password input field", data: "weakpass123" },
   { verb: "click",  targetHint: "Sign in button" },
@@ -740,13 +707,13 @@ declare_step({ caseId: "TC-002", steps: [
 
 **Notes:**
 - Stream your design rationale in plain text BEFORE the first tool call.
-- After ALL \`declare_*\` calls and ReAct exit, the system assembles the final \`draftTestCases\` JSON automatically — do NOT emit a \`\`\`json\`\`\` block in Mode A.
+- After ALL \`emit_case\` calls and ReAct exit, the system assembles the final \`draftTestCases\` JSON automatically — do NOT emit a \`\`\`json\`\`\` block in Mode A.
 - Mode B: every \`action\` first word MUST be a vocabulary verb; every \`fill\` MUST carry \`intent.data\`; every \`verify\` MUST carry \`intent.expectation\`. The system repairs common slips deterministically, but the schema still rejects what it cannot repair.
 ${buildTechniqueFewShot(state)}
 **Rules:**
 - **PICK ONE MODE; never mix.** A partial tool declaration (some cases as tools, others as JSON) is rejected as Mode A incompleteness.
-- Mode A: EVERY case and step is a \`declare_case\`/\`declare_step\` call; no JSON block; exit only after the last step. Prefer ONE \`declare_step\` per case carrying its full \`steps\` array.
-- Mode B: one complete \`\`\`json\`\`\` block, ALL cases, at the very end; zero \`declare_\` calls.
+- Mode A: EVERY case is one \`emit_case\` call (metadata + steps); no JSON block; exit only after the last case.
+- Mode B: one complete \`\`\`json\`\`\` block, ALL cases, at the very end; zero \`emit_case\` calls.
 - All design constraints apply in both modes (testData flat, testLevel lowercase, coveredConditions non-empty, referencedComponentConditions real IDs, step atomicity, no semicolons in expected) — see **designer_rules** for details.
 
 Final check before exiting ReAct: every testData entry states its partition/boundary; preconditions self-contained; \`testLevel\` = \`"component"\`/\`"integration"\` AND honored in step design; **integration cases do NOT re-assert what a sibling component case covers**.
@@ -811,167 +778,67 @@ For every draft case in the input, you will see \`coveredConditions\` (the Analy
 Your input's \`draftCases\` entries are compact summaries (\`stepCount\` + truncated \`stepActions\`), NOT the full step text. You MUST call **draft_case_detail_query** to retrieve a case's full \`steps\`/\`preconditions\`/\`testData\`/\`intent\` before writing its \`finalTestCase\` entry — EVEN for cases you approve unchanged. The schema requires \`intent\` to be preserved **verbatim** from the draft (see "step intent" below); you cannot copy what you have not pulled. Prefer one batch call: \`draft_case_detail_query(["TC-001", "TC-002", ...])\` for all case ids at the start of your review.
 
 ## Load Detailed Rules (MANDATORY)
-Call **quality_rules** to load the complete review dimensions, discipline rules, and coverage matrix format. You MUST load these before reviewing any cases.
-${buildContextSection(state, 'quality')}## Detailed Rules (MANDATORY — load before reviewing)
-Call **quality_rules** before reviewing any cases (9 review dimensions, coverage matrix F27, F17/D2 redundancy).
-
-## Available Tools
+Call **quality_rules** to load the complete review dimensions (9 dimensions), discipline rules, redundancy checks (F17/D2), and coverage matrix format (F27). You MUST load this before reviewing any cases.
+${buildContextSection(state, 'quality')}## Available Tools
 - **requirement_detail_query**: verify requirement details when judging Correctness.
 - **flow_detail_query(flowId)**: load flow step details — use to verify integration test cases against actual flow steps (Correctness dimension).
 - **previous_batch_cases_query**: query previous batch final test cases — use for D2 cross-batch redundancy check (compare titles, testLevel, conditionId against current batch cases).
 - **draft_case_detail_query(caseId)**: pull a draft case's FULL text (all steps, preconditions, testData, intent, tags). REQUIRED before writing ANY finalTestCase entry — even approved/unchanged cases — so \`intent\` is preserved verbatim. Also required before judging F17 redundancy, step atomicity, or making any field-level change. Supports batch: pass an array of case ids to pull all at once.
 - **istqb_guide(techniques?, context?)**: load ISTQB technique guides for reference when judging Technique Fidelity.
 - **quality_rules**: load detailed review rules (9 dimensions, F17, D2, coverage matrix F27). Call before reviewing.
+- **emit_review(...)**: emit your review verdict for ONE case (status/reviewSummary/changeLog). See "Output Format" below.
+- **emit_coverage_row(...)**: emit your semantic assessment (conditionSummary/notes) for ONE condition. See "Output Format" below.
 
-## Strict Schema Constraints (HARD — schema will REJECT violations)
-These constraints are enforced by the Zod schema at parse time. Violations cause Phase 2 retries and may fail the entire pipeline after 3 attempts.
-
-### testLevel — MUST NOT change
-You MUST NOT change the \`testLevel\` of any draft case, and it must stay lowercase: \`"component"\` or \`"integration"\`. The schema will REJECT any other value.
-
-### finalTestCases — MUST include every draft case
-Every draft case ID in the input MUST appear in \`finalTestCases\`. If you want to reject a case, set its \`status\` to \`"rejected"\` and explain in \`reviewSummary\` — but do NOT omit it from the output. Missing cases will be auto-added as rejected with a warning, which wastes a Phase 2 retry.
-
-### testData format
-\`testData\` MUST be an array of **plain strings**. Do NOT nest arrays or objects inside it.
-- WRONG: \`"testData": ["username = admin", ["role1", "role2"]]\` (nested array)
-- RIGHT: \`"testData": ["username = admin", "roles = role1, role2"]\` (flat strings)
-
-### expected field (step atomicity)
-Each step's \`expected\` field must contain a **single assertion** — no semicolons (\`;\` or \`；\`) joining multiple assertions. If you find a draft case with semicolon-joined assertions, split it into separate steps in your final output.
-
-WRONG (will be REJECTED):
-\`\`\`
-{ "stepNumber": 3, "action": "Click the Submit button.", "expected": "The form is NOT submitted; no network request to auth API is observed." }
-\`\`\`
-RIGHT (split into two steps):
-\`\`\`
-{ "stepNumber": 3, "action": "Click the Submit button.", "expected": "The form is not submitted." }
-{ "stepNumber": 4, "action": "Observe the browser network tab.", "expected": "No network request to the auth API endpoint is observed." }
-\`\`\`
-
-**Rule: if your \`expected\` value contains a semicolon, it is WRONG. Always split.**
-
-### coveredConditions and referencedComponentConditions
-Preserve these from the draft cases. Do NOT empty them. If a draft case had \`coveredConditions: ["C-001"]\`, the final case must also have \`coveredConditions: ["C-001"]\` (or a superset).
-
-### step intent — MUST preserve verbatim
-Every draft step carries an \`intent\` object (\`targetHint\`/\`data\`/\`expectation\` — the action verb lives in the \`action\` text first word). Copy the \`intent\` **unchanged** into \`finalTestCases\` — do NOT rewrite, re-enum, or drop it. If missing, leave it missing (the recorder falls back to inference); do NOT invent one. You MUST have pulled the draft case via \`draft_case_detail_query\` before writing its finalTestCase — copying from memory corrupts \`intent\`.
+## Hard Constraints
+- \`testLevel\` MUST stay as the Designer set it (never flip) — see **quality_rules** (Test Level Fidelity).
+- Every draft case ID MUST get a final review: reject via \`status: "rejected"\` + \`reviewSummary\`, never omit it.
+- \`coveredConditions\` / \`referencedComponentConditions\` and each step's \`intent\` are preserved verbatim from the draft (Mode A merges them; Mode B: copy unchanged, never invent \`intent\`) — pull full text via \`draft_case_detail_query\` first.
+- \`testData\` flat strings; \`expected\` single assertion (no semicolons — split into steps) — see **quality_rules** (Clarity / Data Validity).
 
 ${state.humanReviewFeedback ? `## Reviewer Feedback\n${state.humanReviewFeedback}` : ''}
 
-## Output Format
-Stream your review as plain text in markdown (short headings, blank-line-separated sections, bullets). For any case you changed, name the dimension that flagged it and what you fixed.
+## Output Format — ONE of TWO Modes (MANDATORY — never mix)
+Choose **one** mode for ALL cases. Mixing is rejected as incomplete.
 
-End with a single JSON code block containing the COMPLETE output. Nothing after it.
+**Mode A (preferred) — Tool-Use Structured Output.** For EACH draft case call \`emit_review\` (status + reviewSummary + changeLog) — even when approving unchanged (\`status: "approved"\`, empty \`changeLog\`). Only include \`steps\`/\`testData\` when you actually change them. Then for EACH Analyst condition call \`emit_coverage_row\` (\`conditionSummary\` + optional \`notes\`). The system assembles \`finalTestCases\` (merging your verdicts onto the draft cases) and computes the coverage matrix \`coveredByCaseIds\`/\`coverageStatus\`/\`testLevel\`/\`primaryTechnique\`/\`category\`/summary deterministically — do NOT emit a JSON block.
 
-\`\`\`json
-{
-  "finalTestCases": [
-    {
-      "id": "TC-001",
-      "title": "End-to-end login: admin credentials propagate from auth API to session store and dashboard",
-      "conditionId": "C-002",
-      "requirementId": "req-aut-auth-login-valid-success",
-      "coveredConditions": ["C-002"],
-      "referencedComponentConditions": ["C-001", "C-003"],
-      "priority": "critical",
-      "category": "functional",
-      "testLevel": "integration",
-      "techniqueApplied": "Use Case Testing",
-      "preconditions": [
-        "User is on the login page",
-        "Browser session is clean with no existing authenticated session",
-        "Administrator account exists and is active (assumed per component condition C-001)",
-        "Client-side validation passes for well-formed password (assumed per component condition C-003)"
-      ],
-      "testData": ["username = admin (valid partition)", "password = admin123 (valid partition)"],
-      "steps": [
-        { "stepNumber": 1, "action": "fill the username field with 'admin'", "expected": "The username field displays 'admin' with no client-side validation error." },
-        { "stepNumber": 2, "action": "fill the password field with 'admin123'", "expected": "The password field accepts 'admin123' with no client-side validation error." },
-        { "stepNumber": 3, "action": "click the Sign in button", "expected": "The login request is sent to the auth API." },
-        { "stepNumber": 4, "action": "waitFor the network response from /aut-api/auth/login", "expected": "The auth API returns HTTP 200." },
-        { "stepNumber": 5, "action": "verify the URL contains /dashboard", "expected": "The browser URL contains the dashboard path." },
-        { "stepNumber": 6, "action": "verify the dashboard displays 'Welcome back, Admin!'", "expected": "The dashboard displays 'Welcome back, Admin!'." }
-      ],
-      "tags": ["authentication", "login", "dashboard", "session", "smoke", "happy-path", "integration"],
-      "status": "approved",
-      "reviewSummary": "coveredConditions=[C-002] matches the flow condition this case addresses; referencedComponentConditions=[C-001, C-003] properly names the atomic preconditions. Steps traverse auth API → session store → dashboard (cross-component). No changes required.",
-      "changeLog": []
-    },
-    {
-      "id": "TC-002",
-      "title": "Reject quantity below minimum boundary",
-      "conditionId": "C-014",
-      "requirementId": "req-order-quantity-limits",
-      "coveredConditions": ["C-014"],
-      "referencedComponentConditions": [],
-      "priority": "high",
-      "category": "boundary",
-      "testLevel": "component",
-      "techniqueApplied": "Boundary Value Analysis",
-      "preconditions": ["User is on the order form with a valid product selected"],
-      "testData": ["quantity = 0 (one below minimum 1)"],
-      "steps": [
-        { "stepNumber": 1, "action": "Enter 0 into the quantity field.", "expected": "The field accepts the keystroke without client-side blocking." },
-        { "stepNumber": 2, "action": "Submit the order form.", "expected": "The form is rejected with validation message 'Quantity must be at least 1'." }
-      ],
-      "tags": ["boundary", "validation", "order", "component"],
-      "status": "approved_with_changes",
-      "reviewSummary": "Data Validity: corrected 'quantity = small number' to the exact one-below-minimum value to satisfy BVA. testLevel=component preserved.",
-      "changeLog": [
-        { "field": "testData", "from": "quantity = small number", "to": "quantity = 0 (one below minimum 1)", "reason": "BVA requires the exact boundary value." }
-      ]
-    }
-  ],
-  "coverageMatrix": {
-    "rows": [
-      {
-        "conditionId": "C-002",
-        "conditionSummary": "Valid admin credentials propagate through auth API to session store and dashboard",
-        "requirementId": "req-aut-auth-login-valid-success",
-        "conditionType": "flow",
-        "flowStepRef": { "flowId": "F-login-happy", "sequence": 3, "actionSummary": "Auth API returns 200 + session token" },
-        "testLevel": "integration",
-        "primaryTechnique": "Use Case Testing",
-        "category": "functional",
-        "coveredByCaseIds": ["TC-001"],
-        "coverageStatus": "covered",
-        "notes": ""
-      },
-      {
-        "conditionId": "C-014",
-        "conditionSummary": "Quantity below minimum boundary is rejected",
-        "requirementId": "req-order-quantity-limits",
-        "conditionType": "component",
-        "testLevel": "component",
-        "primaryTechnique": "Boundary Value Analysis",
-        "category": "boundary",
-        "coveredByCaseIds": ["TC-002"],
-        "coverageStatus": "covered",
-        "notes": "Boundary value corrected during review to the explicit one-below-minimum."
-      }
-    ],
-    "summary": {
-      "totalConditions": 2,
-      "coveredConditions": 2,
-      "missingConditions": 0,
-      "byTestLevel": { "component": 1, "integration": 1 },
-      "byTechnique": { "Use Case Testing": 1, "Boundary Value Analysis": 1 },
-      "byCategory": { "functional": 1, "boundary": 1 },
-      "byConditionType": { "component": 1, "flow": 1 }
-    }
-  }
-}
+**Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end (all finalTestCases, all coverageMatrix rows + summary). Semantic correctness is your responsibility — the schema still rejects violations. **Prefer Mode A: Mode B skips the emit tool's enum protection, so any violation costs a whole-batch re-extraction (most expensive, most truncation-prone).**
+
+**FENCELINE: pick one mode before the first tool call. ANY \`emit_\` call locks you into Mode A. If you made NO \`emit_\` call, emit one complete JSON block (Mode B).**
+
+### Mode A workflow
+1. Pull full draft text first: \`draft_case_detail_query([...all case ids...])\` so \`intent\` is preserved verbatim.
+2. For EACH case: \`emit_review({ caseId, status, reviewSummary, changeLog })\`. \`status\` ∈ \`approved\` | \`approved_with_changes\` | \`rejected\`. Include \`steps\`/\`testData\` ONLY if you changed them (full replacement). If you split a semicolon-joined \`expected\` into two steps, supply the full replacement \`steps\` array.
+3. For EACH condition: \`emit_coverage_row({ conditionId, conditionSummary, notes? })\`.
+4. exit ReAct after the last \`emit_coverage_row\`.
+
+**Tool-enforced rules (API rejects violations):**
+- \`status\` is a closed enum: \`approved\` | \`approved_with_changes\` | \`rejected\`.
+- \`changeLog\` entries: \`{ field, from?, to?, reason (REQUIRED) }\`.
+- \`emit_review.steps\`/\`testData\` are FULL replacements (omit to keep the draft unchanged).
+
+### Example — Mode A: reviewing two cases
+\`\`\`
+emit_review({ caseId: "TC-001", status: "approved",
+  reviewSummary: "coveredConditions=[C-002] matches the flow condition; referencedComponentConditions=[C-001, C-003] names the atomic preconditions. No changes required.",
+  changeLog: [] })
+
+emit_review({ caseId: "TC-002", status: "approved_with_changes",
+  reviewSummary: "Data Validity: corrected the quantity to the exact one-below-minimum value to satisfy BVA.",
+  changeLog: [ { "field": "testData", "from": "quantity = small number", "to": "quantity = 0 (one below minimum 1)", "reason": "BVA requires the exact boundary value." } ],
+  testData: ["quantity = 0 (one below minimum 1)"] })
+
+emit_coverage_row({ conditionId: "C-002", conditionSummary: "Valid admin credentials propagate through auth API to session store and dashboard" })
+emit_coverage_row({ conditionId: "C-014", conditionSummary: "Quantity below minimum boundary is rejected", notes: "Boundary value corrected during review." })
 \`\`\`
 
 **Rules:**
-- The \`\`\`json block is the last thing in your response — nothing after it.
-- It must contain ALL final test cases, complete — never a sample. An empty object \`{}\` is always invalid.
-- Every draft case ID MUST appear in \`finalTestCases\` (rejected cases keep \`status: "rejected"\` + a \`reviewSummary\`; never omitted).
+- **PICK ONE MODE; never mix.**
+- Mode A: every case is one \`emit_review\` call; every condition is one \`emit_coverage_row\` call; no JSON block; exit only after the last \`emit_coverage_row\`.
+- Mode B: one complete \`\`\`json\`\`\` block (all finalTestCases complete + coverageMatrix), at the very end; zero \`emit_\` calls.
 - MUST NOT change \`testLevel\`; \`testData\` flat; \`expected\` semicolon-free.
+- Every draft case ID gets an \`emit_review\` (rejected cases keep \`status: "rejected"\` + a \`reviewSummary\`; never omitted — even in Mode B).
 - Modified cases have a field-level \`changeLog\`; untouched cases have \`changeLog: []\`.
-- \`coverageMatrix\` MUST be present: one row per input Analyst conditionId, \`coveredByCaseIds\` referencing real final ids, summary \`byConditionType\` required.
 `;
 }
 

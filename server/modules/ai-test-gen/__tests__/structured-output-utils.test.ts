@@ -4,9 +4,11 @@ import {
   buildThinkingChatOptions,
   callLLMWithStructuredOutput,
   makeSchemaOpenAICompatible,
+  TruncatedOutputError,
   zodToJsonSchema,
 } from '../graph/nodes/utils.ts';
 import { createAnalystOutputProfile } from '../graph/structured-output/analyst.ts';
+import { tryExtractJson } from '../graph/nodes/json-extract.ts';
 import { HtmlKnowledgeCriticalError } from '../graph/skills/html-knowledge.ts';
 
 describe('callLLMWithStructuredOutput', () => {
@@ -531,6 +533,104 @@ expect((error as Error).message).toMatch(/tool state projection failed/i);
     expect(String(repairUser.content)).not.toContain('matching the schema exactly');
     // 携带上一份 assistant 输出作为"最小改动"的锚点。
     expect(calls[2].some((m) => m.role === 'assistant')).toBe(true);
+  });
+
+  it('throws TruncatedOutputError on finishReason=length and does NOT retry the truncated prompt', async () => {
+    let streamIndex = 0;
+    const provider = {
+      streamChat: vi.fn(async function* () {
+        streamIndex += 1;
+        if (streamIndex === 1) {
+          yield { type: 'content', content: 'analysis without tool call' };
+          yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1 } };
+          return;
+        }
+        // Phase 2 attempt 1: output cut off by max_tokens mid-array.
+        yield { type: 'content', content: '{"draftTestCases":[{"id":"TC-1"' };
+        yield { type: 'done', finishReason: 'length', usage: { promptTokens: 1, completionTokens: 5000 } };
+      }),
+    } as any;
+
+    const profile = {
+      toolSchema: { type: 'object', properties: {} },
+      shouldAttemptPhase1Extraction: () => false,
+      normalize: (raw: unknown) => raw,
+      parse: (raw: unknown) => raw,
+      formatValidationError: () => 'invalid',
+    };
+
+    await expect(callLLMWithStructuredOutput(
+      provider,
+      [{ role: 'system', content: 'system' }, { role: 'user', content: 'user' }],
+      [],
+      profile as any,
+      undefined,
+      'test_designer',
+    )).rejects.toBeInstanceOf(TruncatedOutputError);
+
+    // ReAct (1) + Phase 2 attempt 1 (2) — NO second Phase 2 retry.
+    expect(streamIndex).toBe(2);
+  });
+
+  it('still fails schema validation on attempt 1 and truncates on attempt 2 (stale error not rethrown)', async () => {
+    let streamIndex = 0;
+    const provider = {
+      streamChat: vi.fn(async function* () {
+        streamIndex += 1;
+        if (streamIndex === 1) {
+          yield { type: 'content', content: 'analysis without tool call' };
+          yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1 } };
+          return;
+        }
+        // Attempt 1: valid JSON, schema fails → repair feedback.
+        yield { type: 'content', content: '{"draftTestCases":[]}' };
+        yield { type: 'done', usage: { promptTokens: 1, completionTokens: 1 } };
+        // Attempt 2: retry truncates → TruncatedOutputError, not the stale schema error.
+        yield { type: 'content', content: '{"draftTestCases":[{"id"' };
+        yield { type: 'done', finishReason: 'length', usage: { promptTokens: 1, completionTokens: 5000 } };
+      }),
+    } as any;
+
+    let parseCount = 0;
+    const profile = {
+      toolSchema: { type: 'object', properties: {} },
+      shouldAttemptPhase1Extraction: () => false,
+      normalize: (raw: unknown) => raw,
+      parse: () => {
+        parseCount += 1;
+        throw { issues: [{ code: 'custom', path: ['draftTestCases'], message: 'must not be empty' }] };
+      },
+      formatValidationError: () => 'Schema validation failed',
+    };
+
+    await expect(callLLMWithStructuredOutput(
+      provider,
+      [{ role: 'system', content: 'system' }, { role: 'user', content: 'user' }],
+      [],
+      profile as any,
+      undefined,
+      'test_designer',
+    )).rejects.toBeInstanceOf(TruncatedOutputError);
+  });
+});
+
+describe('tryExtractJson truncation gating', () => {
+  const truncated = '{"draftTestCases":[{"id":"TC-1","title":"Verify login"';
+
+  it('returns null for a truncated fragment by default (strict paths)', () => {
+    expect(tryExtractJson(truncated)).toBeNull();
+  });
+
+  it('repairs a truncated fragment only when allowTruncatedRepair is on', () => {
+    const parsed = tryExtractJson(truncated, { allowTruncatedRepair: true }) as any;
+    expect(parsed).toBeTruthy();
+    expect(parsed.draftTestCases).toHaveLength(1);
+  });
+
+  it('still repairs balanced syntax errors regardless of the option', () => {
+    const malformed = `{"draftTestCases":[{"id":"TC-1","title":"Verify login","steps":[]}]}`.replace(/"/g, "'");
+    expect(tryExtractJson(malformed)).toBeTruthy();
+    expect(tryExtractJson(malformed, { allowTruncatedRepair: false })).toBeTruthy();
   });
 });
 

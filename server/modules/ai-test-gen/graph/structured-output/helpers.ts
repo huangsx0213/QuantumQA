@@ -138,7 +138,13 @@ export function normalizeNlStepIntent(intent: unknown): unknown {
   } else if (typeof o.expectation === 'object' && !Array.isArray(o.expectation)) {
     const e = o.expectation as Record<string, unknown>;
     for (const key of ['kind', 'value', 'expression', 'method', 'urlPattern']) {
-      if (e[key] === null) delete e[key];
+      if (e[key] === null) { delete e[key]; continue; }
+      // 非 string 标量（number/boolean）确定性 coerce 为 string：JSON 路径的 LLM 常
+      // 把 expectation.value 写成数字（如 200 而非 "200"）。emit 工具层已强制 string，
+      // 此处让 JSON 路径容错对齐（number/boolean → string 无损）。
+      if (key !== 'kind' && (typeof e[key] === 'number' || typeof e[key] === 'boolean')) {
+        e[key] = String(e[key]);
+      }
     }
     if (typeof e.kind === 'string' && e.kind !== '') {
       const normalized = normalizeExpectationKind(e.kind);

@@ -60,18 +60,7 @@ export function makeQualityNode(opts: QualityNodeOptions) {
     try {
       const override = pipelineRepo.getPromptOverride(state.projectId, agentName);
       const systemPrompt = buildQualitySystemPrompt(state, override?.custom_prompt ?? undefined);
-      const outputProfile = createQualityOutputProfile(
-        draftCases.map((draftCase) => ({
-          id: draftCase.id,
-          conditionId: draftCase.conditionId,
-          requirementId: draftCase.requirementId,
-          expectedTestLevel: draftCase.testLevel,
-          // F10 / F11: forward the traceability arrays so Quality can run the
-          // anti-redundancy check against the same set the Designer declared.
-          coveredConditions: draftCase.coveredConditions,
-          referencedComponentConditions: draftCase.referencedComponentConditions,
-        })),
-      );
+const outputProfile = createQualityOutputProfile(draftCases as any);
 
       const messages = [
         { role: 'system' as const, content: systemPrompt },
@@ -126,7 +115,10 @@ export function makeQualityNode(opts: QualityNodeOptions) {
       log.kv('tokens', usage.input + usage.output);
       log.kv('tokens.cached', usage.cached);
       log.kv('latency', `${latencyMs}ms`);
-      observer?.onComplete?.(agentName, usage, latencyMs, messages, validated);
+      observer?.onComplete?.(agentName, usage, latencyMs, messages, {
+        ...validated,
+        coverageMatrix: computedCoverageMatrix,
+      });
 
       return {
         finalTestCases: validated.finalTestCases as FinalTestCaseContract[],

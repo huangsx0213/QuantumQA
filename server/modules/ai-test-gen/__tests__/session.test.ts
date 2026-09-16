@@ -67,8 +67,7 @@ function batchInput(reference?: HtmlKnowledgeReference) {
       businessFlowBlueprints: undefined,
       htmlKnowledgeReference: reference,
       selectedFlowIds: [],
-      phase: 'analysis' as const,
-      errors: [],
+phase: 'analysis' as const,
     },
   };
 }
@@ -105,7 +104,7 @@ describe('TestGenSession', () => {
 
       const outcome = await session.startBatch({
         batchIndex: 0,
-        inputState: { projectId: 'p', runId: 'r', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis', errors: [] },
+        inputState: { projectId: 'p', runId: 'r', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis' },
       });
       expect(outcome.type).toBe('complete');
       if (outcome.type === 'complete') {
@@ -119,7 +118,7 @@ describe('TestGenSession', () => {
 
       const outcome = await session.startBatch({
         batchIndex: 0,
-        inputState: { projectId: 'p', runId: 'r', mode: 'interactive', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis', errors: [] },
+        inputState: { projectId: 'p', runId: 'r', mode: 'interactive', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis' },
       });
       expect(outcome.type).toBe('interrupt');
     });
@@ -130,7 +129,7 @@ describe('TestGenSession', () => {
 
       await expect(session.startBatch({
         batchIndex: 0,
-        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis', errors: [] },
+        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis' },
       })).rejects.toBeInstanceOf(EmptyGraphStreamError);
     });
 
@@ -146,7 +145,7 @@ describe('TestGenSession', () => {
 
       await expect(session.startBatch({
         batchIndex: 0,
-        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis', errors: [] },
+        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis' },
       })).rejects.toBeInstanceOf(TestGenSessionAbortedError);
     });
 
@@ -172,7 +171,7 @@ describe('TestGenSession', () => {
 
       await expect(abortingSession.startBatch({
         batchIndex: 0,
-        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis', errors: [] },
+        inputState: { projectId: 'p', runId: 'run-1', mode: 'auto', generationMode: 'component', requirementIds: [], currentBatch: [], batchContext: { currentBatch: 1, totalBatches: 1, processedCount: 0 }, projectContext: { name: '', pages: [], endpoints: [] }, businessFlowBlueprints: undefined, selectedFlowIds: [], phase: 'analysis' },
       })).rejects.toBeInstanceOf(TestGenSessionAbortedError);
     });
 
@@ -383,7 +382,6 @@ describe('TestGenSession', () => {
       expect(updateStateCalls[0].values).toMatchObject({
         generationMode: 'mixed',
         testConditions: [{ id: 'c1' }],
-        environmentReady: true,
       });
 
       // stream called with null (resume from checkpoint, not from START)

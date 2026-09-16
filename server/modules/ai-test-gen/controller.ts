@@ -228,9 +228,6 @@ export class TestGenController {
       crossEpicDependencies: undefined,
       previousBatchCoverageSummary: undefined,
       relevantFlowBlueprints: undefined,
-      environmentReady: true,
-      initializationLogs: [],
-      tokenBudget: { estimated: 0, limit: null },
       requirementAnalysis: undefined,
       testConditions: undefined,
       approvedConditions: undefined,
@@ -244,7 +241,6 @@ export class TestGenController {
       humanReviewFeedback: '',
       skillCalls: [],
       phase: 'init',
-      errors: [],
     } as TestGenState;
   }
 

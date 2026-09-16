@@ -13,7 +13,9 @@ import {
   makePreviousBatchCasesQuery,
   type RequirementSkillRepository,
 } from './data-skills.ts';
-import { declareCaseSkill, declareStepSkill } from './declare-step-skill.ts';
+import { emitCaseSkill } from './emit-case-skill.ts';
+import { emitReviewSkill, emitCoverageRowSkill } from './emit-review-skill.ts';
+import { emitConditionSkill, emitAnalysisSkill } from './emit-condition-skill.ts';
 import { Log } from '../../../../shared/services/logger.ts';
 import {
   makeHtmlKnowledgeQuery,
@@ -267,6 +269,9 @@ export function buildAnalystSkills(
     makePreviousBatchConditionsQuery(runId, projectId, undefined, requirementRepository),
     createIstqbGuideSkill(),
     ...knowledgeSkills.filter((s) => s.name === 'analyst_rules').map((s) => s.create()),
+    // Tool Use 强制结构化：Analyst 分片声明条件（emit_analysis once + 每 condition 一次 emit_condition）。
+    emitAnalysisSkill,
+    emitConditionSkill,
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({
@@ -299,9 +304,8 @@ export function buildDesignerSkills(
     createIstqbGuideSkill(),
     ...knowledgeSkills.filter((s) => s.name === 'designer_rules').map((s) => s.create()),
     // Tool Use 强制结构化：verb 在 API 层 enum 强制，data/expectation 按 verb 配对强制。
-    // LLM 写 step 必须通过 declare_step，无法写出非词表 verb。
-    declareCaseSkill,
-    declareStepSkill,
+    // LLM 写 case 必须通过 emit_case，无法写出非词表 verb。
+    emitCaseSkill,
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({
@@ -332,6 +336,10 @@ export function buildQualitySkills(
     makePreviousBatchCasesQuery(runId, projectId, undefined, requirementRepository),
     createIstqbGuideSkill(),
     ...knowledgeSkills.filter((s) => s.name === 'quality_rules').map((s) => s.create()),
+    // Tool Use 强制结构化：Quality 不再全量重写 finalTestCases，改为 emit_review
+    // （每 case 评审结论 + 差异）+ emit_coverage_row（每 condition 语义评估）。
+    emitReviewSkill,
+    emitCoverageRowSkill,
   ];
   if (htmlKnowledge) {
     skills.push(makeHtmlKnowledgeQuery({

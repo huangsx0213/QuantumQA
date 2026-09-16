@@ -9,6 +9,25 @@ import {
 import { createAnalystOutputProfile } from '../graph/structured-output/analyst.ts';
 import { createDesignerOutputProfile, designerOutputProfile } from '../graph/structured-output/designer.ts';
 import { createQualityOutputProfile, qualityOutputProfile } from '../graph/structured-output/quality.ts';
+import { buildExtractionPrompt } from '../graph/nodes/utils.ts';
+
+describe('extraction context fact block (F5)', () => {
+  it('embeds the ground-truth conditions table in the extraction prompt', () => {
+    const profile = createDesignerOutputProfile([
+      { id: 'C-001', requirementId: 'req-aut-001', conditionType: 'component', expectedTestLevel: 'component' },
+      { id: 'C-002', requirementId: 'req-aut-001', conditionType: 'flow', expectedTestLevel: 'integration' },
+    ]);
+    const prompt = buildExtractionPrompt(profile);
+    expect(prompt).toContain('Ground-truth facts');
+    expect(prompt).toContain('C-001 | req-aut-001 | component | component');
+    expect(prompt).toContain('C-002 | req-aut-001 | flow | integration');
+  });
+
+  it('omits the fact block when no conditions are expected', () => {
+    const prompt = buildExtractionPrompt(createDesignerOutputProfile());
+    expect(prompt).not.toContain('Ground-truth facts');
+  });
+});
 
 describe('structured-output helpers', () => {
   it('converts null to undefined', () => {
@@ -1264,7 +1283,7 @@ expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
   it('F11: rejects integration cases with empty referencedComponentConditions', () => {
     const profile = createDesignerOutputProfile([
       { id: 'C-1', requirementId: 'REQ-1', expectedTestLevel: 'integration', conditionType: 'flow' },
-    ]);
+    ], ['component:REQ-1:C-2']);
 
     expect(() => profile.parse(profile.normalize({
       draftTestCases: [{
@@ -1289,6 +1308,39 @@ expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
         selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
       }],
     }))).toThrow(/referencedComponentConditions is empty/);
+  });
+
+  it('F11 degrades when the batch has no component condition to reference (out-of-scope)', () => {
+    // A flow-only batch: the flow story's component stories were out-of-scope /
+    // in another batch and contributed no injectable component references.
+    // F11 must NOT hard-reject an empty referencedComponentConditions here —
+    // otherwise the Designer loops (empty → rejected → retried) forever.
+    const profile = createDesignerOutputProfile([
+      { id: 'C-1', requirementId: 'REQ-1', expectedTestLevel: 'integration', conditionType: 'flow' },
+    ]);
+
+    expect(() => profile.parse(profile.normalize({
+      draftTestCases: [{
+        id: 'TC-1',
+        title: 'End-to-end login',
+        conditionId: 'C-1',
+        requirementId: 'REQ-1',
+        coveredConditions: ['C-1'],
+        referencedComponentConditions: [],
+        priority: 'critical',
+        category: 'functional',
+        testLevel: 'integration',
+        techniqueApplied: 'Use Case Testing',
+        preconditions: [],
+        testData: [],
+        steps: [
+          { stepNumber: 1, action: 'click submit', expected: 'Auth API returns 200', intent: { actionType: 'click' } },
+        ],
+        postconditions: [],
+        tags: [],
+        selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
+      }],
+    }))).not.toThrow();
   });
 
   it('F11: integration case must reference a real condition of type=component', () => {
@@ -1343,12 +1395,12 @@ expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
     }))).toThrow(/only component-typed conditions may be referenced/);
   });
 
-  it('F18: rejects steps with bundled assertions (semicolons in expected)', () => {
+  it('F3: flags (does not reject) steps with bundled assertions (semicolons in expected)', () => {
     const profile = createDesignerOutputProfile([
       { id: 'C-1', requirementId: 'REQ-1', expectedTestLevel: 'component' },
     ]);
 
-    expect(() => profile.parse(profile.normalize({
+    const parsed = profile.parse(profile.normalize({
       draftTestCases: [{
         id: 'TC-1',
         title: 'Verify login',
@@ -1369,7 +1421,11 @@ expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
         tags: [],
         selfReview: { score: 8, strengths: [], weaknesses: [], suggestions: [] },
       }],
-    }))).toThrow(/single assertion/);
+    }));
+    // Step passes through — the compile gate flags it for review instead of
+    // rejecting the whole batch.
+    const step = parsed.draftTestCases[0].steps[0] as any;
+    expect(step._needsReview).toContain('semicolon-separated');
   });
 
   it('F18: rejects steps with over-long expected (>200 chars)', () => {
@@ -1427,6 +1483,45 @@ expect(parsed.draftTestCases[0].selfReview[field]).toEqual([]);
     }));
 
     expect(parsed.draftTestCases[0].coveredConditions).toEqual(['C-1']);
+  });
+
+  // ============================================================
+  // F2: multi-gap collection — validateConditionCoverage + validateFlowCaseReferences
+  // collect ALL cross-field gaps before throwing, so emit-repair can fix all
+  // failing entities in one round instead of one-per-round.
+  // ============================================================
+  it('collects multiple cross-field gaps in a single thrown error (F2)', () => {
+    const profile = createDesignerOutputProfile([
+      { id: 'C-001', requirementId: 'req-1', conditionType: 'component', expectedTestLevel: 'component' },
+      { id: 'C-002', requirementId: 'req-2', conditionType: 'flow', expectedTestLevel: 'integration' },
+    ], []);
+
+    const caseA = makeDesignerCase({
+      id: 'TC-A', conditionId: 'C-999', requirementId: 'wrong',
+      steps: [{ stepNumber: 1, action: 'fill the username field with admin', expected: 'Username shown', intent: { data: 'admin' } }],
+    });
+    const caseB = makeDesignerCase({
+      id: 'TC-B', conditionId: 'C-002', requirementId: 'req-2', testLevel: 'component',
+      steps: [{ stepNumber: 1, action: 'fill the username field with admin', expected: 'Username shown', intent: { data: 'admin' } }],
+    });
+
+    let thrown: any;
+    try {
+      profile.parse(profile.normalize({ draftTestCases: [caseA, caseB] }));
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeTruthy();
+    const gaps = thrown.repairGaps ?? [];
+    // TC-A: dangling conditionId + (can't check requirementId against unknown condition, so that gap is skipped)
+    // TC-B: wrong testLevel (integration expected, got component)
+    // Missing coverage: C-001 not covered
+    expect(gaps.length).toBeGreaterThanOrEqual(3);
+    const gapTypes = gaps.map((g: any) => g.type);
+    expect(gapTypes).toContain('identity-mismatch');
+    expect(gapTypes).toContain('wrong-value');
+    expect(gapTypes).toContain('missing-entity');
   });
 });
 

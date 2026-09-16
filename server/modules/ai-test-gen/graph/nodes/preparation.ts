@@ -184,9 +184,6 @@ export function makePreparationNode(opts: PreparationNodeOptions) {
     log.success(`EXIT ── environment ready (${latencyMs}ms)`);
 
     return {
-      environmentReady: true,
-      initializationLogs: [],
-      tokenBudget: { estimated, limit: null },
       crossEpicDependencies,
       relevantFlowBlueprints: relevantFlowsWithFlag,
       phase: 'analysis',

@@ -38,6 +38,7 @@ import { Log } from '../../shared/services/logger.ts';
 import { RunCacheRegistry, runCacheRegistry } from './run-cache-registry.ts';
 import { ProjectDeletionLock, projectDeletionLock } from './project-deletion-lock.ts';
 import { requirementsFromHtmlSnapshot } from './html-knowledge/requirement-snapshot.ts';
+import { resetFailureTelemetry, logFailureSummary } from './infra/failure-telemetry.ts';
 import type { ResolvedHtmlKnowledgeRuntime } from './graph/skills/html-knowledge.ts';
 import type { HtmlKnowledgeReference } from './html-knowledge/types.ts';
 import type { Requirement } from '../../shared/contracts/index.ts';
@@ -376,6 +377,9 @@ export class Orchestrator {
     let keepSse = false;
 
     try {
+      // F4: reset structured-failure telemetry for this run; the distribution
+      // is logged when the run finishes (success or failure).
+      resetFailureTelemetry();
       ctx = await this.contextBuilder.build(runId, projectId, params.mode, {
         providerConfigName: params.providerConfigName,
         model: params.model,
@@ -626,9 +630,11 @@ export class Orchestrator {
 
         const { totalCases, removedCount } = this.finishRun(ctx, allResults, epics.length);
         log.success(`All batches done ── ${totalCases} final cases${removedCount > 0 ? ` (${removedCount} suspected duplicates — prevent at generation, not here)` : ''}`);
+        logFailureSummary();
       }
     } catch (err: any) {
       if (err instanceof RunCancelledError) return;
+      logFailureSummary();
       if (ctx) {
         if (!ctx.isAborted()) ctx.scope.markFailed(err.message);
       } else {
@@ -1626,7 +1632,6 @@ export class Orchestrator {
       selectedFlowIds,
       generationMode,
       phase: 'analysis' as const,
-      errors: [],
     };
   }
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { nlStepIntentSchema, validateStepContract, parseActionVerb, type NlStepIntent } from 'shared/recording/nl-intent.ts';
 import { draftTestCaseContractSchema, draftStepContractSchema, type DraftTestCaseContract } from 'shared/recording/agent-contracts.ts';
-import { makeSchemaOpenAICompatible, zodToJsonSchema } from '../nodes/utils.ts';
+import { makeSchemaOpenAICompatible, zodToJsonSchema, tryExtractFromEmitTools } from '../nodes/utils.ts';
 import {
   arrayFromRecordValues,
   coerceNumber,
@@ -13,61 +13,32 @@ import {
   wrapSingleObjectInArray,
 } from './helpers.ts';
 import type { StructuredOutputProfile } from './profile.ts';
+import { throwRepairGaps, type RepairGap } from './repair-plan.ts';
 
 // ============================================================
-// DraftCase 步骤：from draftStepContractSchema + F18 本地 superRefine
+// DraftCase 步骤：from draftStepContractSchema
+// F3: step-atomicity style constraints (compound signals, semicolons in
+// expected) moved OUT of the schema superRefine into a compile gate in
+// normalize(). The schema only retains length caps (true structural
+// constraints). A step that writes "fill X, then click Y" is usable —
+// rejecting 19 good cases for 1 style violation is the wrong trade.
 // ============================================================
 const DesignerStepSchema = draftStepContractSchema.extend({
-  // F18-action: step atomicity for the `action` field. Compound `action`
-  // patterns are rejected at the schema level — the LLM gets a clear
-  // rejection message and self-corrects in Phase 2 retry.
-  action: z.string().superRefine((val, ctx) => {
+  action: z.string().max(500).superRefine((val, ctx) => {
     const v = String(val ?? '').trim();
     if (v.length > 200) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `action must be a single operation (<= 200 chars), got ${v.length} chars. Split into multiple steps. Value: "${v.slice(0, 80)}${v.length > 80 ? '...' : ''}"`,
       });
-      return;
-    }
-    // High-precision compound-action signals drawn from observed LLM
-    // violations. Each indicates 2+ actions bundled into one step.
-    // "while" is narrowed to action-gerund patterns to avoid false positives
-    // on state qualifiers like "while authenticated session is active".
-    // NOTE: "both" is excluded from schema rejection — the LLM consistently
-    // fails to self-correct it in Phase 2 (e.g. "Ensure both X and Y are
-    // empty"). The rules doc and extractionHints still flag it as wrong.
-    const compoundSignals: ReadonlyArray<readonly [RegExp, string]> = [
-      [/\bwhile\s+(leaving|entering|typing|clicking|submitting|selecting|filling|pressing|choosing|checking|unchecking|ensuring|setting|clearing|providing|keeping|maintaining)\b/i, '"while <gerund>" (do X while doing Y)'],
-      [/,\s*then\b/i, '", then" (sequential actions)'],
-      [/\bbut\s+(leave|don.?t|do\s+not|without)\b/i, '"but leave/without" (contrast bundling)'],
-    ];
-    for (const [pattern, label] of compoundSignals) {
-      if (pattern.test(v)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `action must contain a SINGLE operation — detected compound pattern ${label}. Split into multiple steps — one action per step. Value: "${v.slice(0, 80)}${v.length > 80 ? '...' : ''}"`,
-        });
-      }
     }
   }),
-  // F18: step atomicity — same constraint Quality enforces. Splitting
-  // bundled assertions into multiple steps makes failures localizable
-  // and is enforced at the earliest possible layer.
-  expected: z.string().superRefine((val, ctx) => {
+  expected: z.string().max(500).superRefine((val, ctx) => {
     const v = String(val ?? '');
     if (v.length > 200) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `expected must be a single observable outcome (<= 200 chars), got ${v.length} chars. Split into multiple steps. Value: "${v.slice(0, 80)}${v.length > 80 ? '...' : ''}"`,
-      });
-      return;
-    }
-    const segments = v.split(/[;；]/).map((s) => s.trim()).filter(Boolean);
-    if (segments.length > 1) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `expected must contain a single assertion (found ${segments.length} semicolon-separated segments). Split into multiple steps — one assertion per step. Value: "${v.slice(0, 80)}${v.length > 80 ? '...' : ''}"`,
       });
     }
   }),
@@ -124,6 +95,8 @@ interface ConditionInfo {
 function validateConditionCoverage(
   parsed: DesignerRuntimeOutput,
   expectedConditions: ConditionInfo[],
+  gaps: RepairGap[],
+  issues: z.core.$ZodIssue[],
 ): DesignerRuntimeOutput {
   if (expectedConditions.length === 0) return parsed;
 
@@ -132,62 +105,45 @@ function validateConditionCoverage(
   const coveredConditionIds = new Set<string>();
   for (const testCase of parsed.draftTestCases) {
     if (seenCaseIds.has(testCase.id)) {
-      throw new z.ZodError([
-        {
-          code: 'custom',
-          path: ['draftTestCases'],
-          message: `Duplicate draft test case id: ${testCase.id}`,
-          input: testCase,
-        },
-      ]);
+      gaps.push({ type: 'identity-mismatch', entityId: testCase.id, field: 'id', fix: `rename this case to a unique id (duplicate: ${testCase.id})` });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Duplicate draft test case id: ${testCase.id}`, input: testCase });
+      continue;
     }
     seenCaseIds.add(testCase.id);
 
     const expected = expectedByCondition.get(testCase.conditionId);
     if (!expected) {
-      throw new z.ZodError([
-        {
-          code: 'custom',
-          path: ['draftTestCases'],
-          message: `Draft test case ${testCase.id} uses conditionId "${testCase.conditionId}" outside the current Analyst conditions`,
-          input: testCase,
-        },
-      ]);
+      gaps.push({ type: 'identity-mismatch', entityId: testCase.id, field: 'conditionId', badValue: testCase.conditionId, fix: 'set conditionId to a real analyst condition id' });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} uses conditionId "${testCase.conditionId}" outside the current Analyst conditions`, input: testCase });
+      continue;
     }
-    for (const conditionId of testCase.coveredConditions) {
-      if (!expectedByCondition.has(conditionId)) {
-        throw new z.ZodError([
-          {
-            code: 'custom',
-            path: ['draftTestCases'],
-            message: `Draft test case ${testCase.id} includes conditionId "${conditionId}" in coveredConditions outside the current Analyst conditions`,
-            input: testCase,
-          },
-        ]);
+    for (let ci = 0; ci < testCase.coveredConditions.length; ci++) {
+      const conditionId = testCase.coveredConditions[ci];
+      if (expectedByCondition.has(conditionId)) {
+        coveredConditionIds.add(conditionId);
+        continue;
       }
-      coveredConditionIds.add(conditionId);
+      // Auto-fix: LLM 常把 requirementId（如 req-aut-auth-session-invalid）
+      // 误塞进 coveredConditions（应放 condition ID 如 C-008）。flow condition 的
+      // requirementId 就是 flow AC id，如果唯一匹配，remap 到那个 condition 的 id。
+      const matches = expectedConditions.filter((c) => c.requirementId === conditionId);
+      if (matches.length === 1) {
+        testCase.coveredConditions[ci] = matches[0].id;
+        coveredConditionIds.add(matches[0].id);
+        continue;
+      }
+      gaps.push({ type: 'bad-reference', entityId: testCase.id, field: 'coveredConditions', badValue: conditionId, fix: `coveredConditions must contain condition IDs (e.g. "C-008"), not requirement IDs (e.g. "req-..."). Remove "${conditionId}" or replace with the matching condition id` });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} includes conditionId "${conditionId}" in coveredConditions outside the current Analyst conditions`, input: testCase });
     }
     coveredConditionIds.add(testCase.conditionId);
 
     if (testCase.requirementId !== expected.requirementId) {
-      throw new z.ZodError([
-        {
-          code: 'custom',
-          path: ['draftTestCases'],
-          message: `Draft test case ${testCase.id} has requirementId "${testCase.requirementId}" but condition ${testCase.conditionId} belongs to requirement "${expected.requirementId}"`,
-          input: testCase,
-        },
-      ]);
+      gaps.push({ type: 'identity-mismatch', entityId: testCase.id, field: 'requirementId', badValue: testCase.requirementId, fix: `set requirementId to "${expected.requirementId}"` });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} has requirementId "${testCase.requirementId}" but condition ${testCase.conditionId} belongs to requirement "${expected.requirementId}"`, input: testCase });
     }
     if (expected.expectedTestLevel && testCase.testLevel !== expected.expectedTestLevel) {
-      throw new z.ZodError([
-        {
-          code: 'custom',
-          path: ['draftTestCases'],
-          message: `Draft test case ${testCase.id} has testLevel "${testCase.testLevel}" but condition ${testCase.conditionId} was tagged "${expected.expectedTestLevel}" by the Analyst. Honor the Analyst's tag.`,
-          input: testCase,
-        },
-      ]);
+      gaps.push({ type: 'wrong-value', entityId: testCase.id, field: 'testLevel', badValue: testCase.testLevel, fix: `set testLevel to "${expected.expectedTestLevel}"` });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} has testLevel "${testCase.testLevel}" but condition ${testCase.conditionId} was tagged "${expected.expectedTestLevel}" by the Analyst. Honor the Analyst's tag.`, input: testCase });
     }
   }
   const missingConditionIds = expectedConditions
@@ -195,14 +151,8 @@ function validateConditionCoverage(
     .map((c) => c.id);
 
   if (missingConditionIds.length > 0) {
-    throw new z.ZodError([
-      {
-        code: 'custom',
-        path: ['draftTestCases'],
-        message: `Missing draft test cases for conditionIds: ${missingConditionIds.join(', ')}`,
-        input: parsed,
-      },
-    ]);
+    gaps.push({ type: 'missing-entity', entityId: missingConditionIds.join(','), field: 'draftTestCases', fix: `emit a test case covering each missing condition: ${missingConditionIds.join(', ')}` });
+    issues.push({ code: 'custom', path: ['draftTestCases'], message: `Missing draft test cases for conditionIds: ${missingConditionIds.join(', ')}`, input: parsed });
   }
 
   return parsed;
@@ -361,6 +311,41 @@ function getIntentData(intent: unknown): unknown {
   return undefined;
 }
 
+// ============================================================
+// F3: step-atomicity compile gate
+// ============================================================
+// Compound signals (", then", "while <gerund>", "but leave/without",
+// semicolons in expected) were previously hard-rejected by superRefine,
+// discarding 19 good cases for 1 style violation. They are now detected
+// here in normalize() and logged as needs-review warnings — the step
+// passes through unchanged. The Quality layer can surface these flags.
+// Auto-splitting is deferred: the expected-field redistribution after a
+// split is semantically ambiguous (which step owns which assertion?),
+// so we flag rather than risk a wrong split.
+
+const COMPOUND_ACTION_SIGNALS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bwhile\s+(leaving|entering|typing|clicking|submitting|selecting|filling|pressing|choosing|checking|unchecking|ensuring|setting|clearing|providing|keeping|maintaining)\b/i, 'while <gerund>'],
+  [/,\s*then\b/i, '", then"'],
+  [/\bbut\s+(leave|don.?t|do\s+not|without)\b/i, '"but leave/without"'],
+  [/\bboth\b/i, '"both"'],
+];
+
+function flagCompoundSteps(steps: Record<string, unknown>[]): void {
+  for (const step of steps) {
+    const action = String(step.action ?? '').trim();
+    const expected = String(step.expected ?? '');
+    const flags: string[] = [];
+    for (const [pattern, label] of COMPOUND_ACTION_SIGNALS) {
+      if (pattern.test(action)) flags.push(`action:${label}`);
+    }
+    const segments = expected.split(/[;；]/).map((s) => s.trim()).filter(Boolean);
+    if (segments.length > 1) flags.push(`expected:${segments.length} semicolon-separated assertions`);
+    if (flags.length > 0) {
+      step._needsReview = flags.join('; ');
+    }
+  }
+}
+
 function normalizeDraftTestCase(
   value: unknown,
 ): Record<string, unknown> {
@@ -409,6 +394,9 @@ const steps = Array.isArray(tc.steps)
       })
     : tc.steps;
 
+  // F3: flag compound-action steps as needs-review (does not reject or split).
+  if (Array.isArray(steps)) flagCompoundSteps(steps as Record<string, unknown>[]);
+
   const selfReview = tc.selfReview && typeof tc.selfReview === 'object' && !Array.isArray(tc.selfReview)
     ? {
         ...(tc.selfReview as Record<string, unknown>),
@@ -445,11 +433,23 @@ function validateFlowCaseReferences(
   parsed: DesignerRuntimeOutput,
   expectedConditions: ConditionInfo[],
   externalComponentReferenceIds: string[],
+  gaps: RepairGap[],
+  issues: z.core.$ZodIssue[],
 ): DesignerRuntimeOutput {
   if (expectedConditions.length === 0) return parsed;
 
   const byId = new Map(expectedConditions.map((c) => [c.id, c]));
   const externalComponentReferences = new Set(externalComponentReferenceIds);
+  // F11 only applies when there is a component condition that COULD be referenced.
+  // When the batch has no component conditions at all (their component stories were
+  // out-of-scope or handled in another batch that contributed no injectable refs),
+  // demanding a non-empty referencedComponentConditions is unsatisfiable and drives
+  // the Designer into a retry loop (integration case → empty → rejected → retried).
+  // In that case accept empty referencedComponentConditions: the component
+  // dependencies are expressed as preconditions instead. ("不确定就降级，绝不硬塞")
+  const hasReferencableComponentConditions =
+    expectedConditions.some((c) => c.conditionType === 'component')
+    || externalComponentReferences.size > 0;
 
   for (const testCase of parsed.draftTestCases) {
     if (testCase.coveredConditions.length === 0 && testCase.conditionId) {
@@ -457,15 +457,11 @@ function validateFlowCaseReferences(
     }
 
     // F11: integration cases must declare at least one referenced component condition.
-    if (testCase.testLevel === 'integration' && testCase.referencedComponentConditions.length === 0) {
-      throw new z.ZodError([
-        {
-          code: 'custom',
-          path: ['draftTestCases'],
-          message: `Draft test case ${testCase.id} has testLevel="integration" but referencedComponentConditions is empty. Integration cases must explicitly list the component conditions they assume as preconditions (use coveredConditions to record which flow condition this case covers, referencedComponentConditions to record the component behaviors it depends on).`,
-          input: testCase,
-        },
-      ]);
+    if (testCase.testLevel === 'integration'
+      && testCase.referencedComponentConditions.length === 0
+      && hasReferencableComponentConditions) {
+      gaps.push({ type: 'missing-entity', entityId: testCase.id, field: 'referencedComponentConditions', fix: 'list the component-typed condition ids this integration case assumes as preconditions' });
+      issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} has testLevel="integration" but referencedComponentConditions is empty. Integration cases must explicitly list the component conditions they assume as preconditions (use coveredConditions to record which flow condition this case covers, referencedComponentConditions to record the component behaviors it depends on).`, input: testCase });
     }
 
     // F12: every reference on every case must be an approved component condition.
@@ -473,27 +469,16 @@ function validateFlowCaseReferences(
       if (externalComponentReferences.has(refId)) continue;
       const ref = byId.get(refId);
       if (!ref) {
-        throw new z.ZodError([
-          {
-            code: 'custom',
-            path: ['draftTestCases'],
-            message: `Draft test case ${testCase.id} references unknown condition "${refId}" in referencedComponentConditions. Reference must be a current-batch component condition id or an injected qualified component reference.`,
-            input: testCase,
-          },
-        ]);
+        gaps.push({ type: 'bad-reference', entityId: testCase.id, field: 'referencedComponentConditions', badValue: refId, fix: `remove the unknown condition "${refId}" from referencedComponentConditions` });
+        issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} references unknown condition "${refId}" in referencedComponentConditions. Reference must be a current-batch component condition id or an injected qualified component reference.`, input: testCase });
+        continue;
       }
       if (ref.conditionType !== 'component') {
         const componentConditionIds = expectedConditions
           .filter(c => c.conditionType === 'component')
           .map(c => c.id);
-        throw new z.ZodError([
-          {
-            code: 'custom',
-            path: ['draftTestCases'],
-            message: `Draft test case ${testCase.id} references condition "${refId}" of type "${ref.conditionType}" in referencedComponentConditions, but only component-typed conditions may be referenced as integration-case preconditions. FIX: (1) Remove "${refId}" from referencedComponentConditions and add it to coveredConditions instead. (2) Add one or more of these component-typed condition ids to referencedComponentConditions: [${componentConditionIds.join(', ')}].`,
-            input: testCase,
-          },
-        ]);
+        gaps.push({ type: 'bad-reference', entityId: testCase.id, field: 'referencedComponentConditions', badValue: refId, fix: `move "${refId}" to coveredConditions (it is flow-typed) and reference a component-typed condition instead` });
+        issues.push({ code: 'custom', path: ['draftTestCases'], message: `Draft test case ${testCase.id} references condition "${refId}" of type "${ref.conditionType}" in referencedComponentConditions, but only component-typed conditions may be referenced as integration-case preconditions. FIX: (1) Remove "${refId}" from referencedComponentConditions and add it to coveredConditions instead. (2) Add one or more of these component-typed condition ids to referencedComponentConditions: [${componentConditionIds.join(', ')}].`, input: testCase });
       }
     }
   }
@@ -505,8 +490,21 @@ export function createDesignerOutputProfile(
   expectedConditions: ConditionInfo[] = [],
   externalComponentReferenceIds: string[] = [],
 ): StructuredOutputProfile<DesignerRuntimeOutput> {
+  // F5: compact ground-truth table for the extraction prompt. Phase 2
+  // condenses the conversation (drops tool results) — without this block the
+  // facts that validateConditionCoverage checks (conditionId ownership,
+  // requirementId, testLevel) are absent from the extraction context.
+  const extractionContext = expectedConditions.length > 0
+    ? [
+        'Current batch conditions (id | requirementId | conditionType | expectedTestLevel) — every draft case must use a conditionId from this table and keep requirementId/testLevel consistent with it:',
+        ...expectedConditions.map((c) => `${c.id} | ${c.requirementId} | ${c.conditionType ?? 'unknown'} | ${c.expectedTestLevel ?? 'unknown'}`),
+      ].join('\n')
+    : undefined;
+
   return {
     toolSchema: makeSchemaOpenAICompatible(zodToJsonSchema(DesignerRuntimeSchema)),
+    emitExtract: tryExtractFromEmitTools,
+    extractionContext,
     shouldAttemptPhase1Extraction(raw: unknown): boolean {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
       const obj = raw as Record<string, unknown>;
@@ -528,8 +526,21 @@ export function createDesignerOutputProfile(
       };
     },
     parse(normalized: unknown): DesignerRuntimeOutput {
-      const parsed = validateConditionCoverage(DesignerRuntimeSchema.parse(normalized), expectedConditions);
-      return validateFlowCaseReferences(parsed, expectedConditions, externalComponentReferenceIds);
+      const parsed = DesignerRuntimeSchema.parse(normalized);
+      // F3: re-flag compound steps after Zod parse (which strips unknown keys
+      // like _needsReview). The compile gate is idempotent — clean steps get
+      // no flag, already-flagged steps are re-detected.
+      for (const tc of parsed.draftTestCases) {
+        flagCompoundSteps(tc.steps as Record<string, unknown>[]);
+      }
+      const gaps: RepairGap[] = [];
+      const issues: z.core.$ZodIssue[] = [];
+      validateConditionCoverage(parsed, expectedConditions, gaps, issues);
+      validateFlowCaseReferences(parsed, expectedConditions, externalComponentReferenceIds, gaps, issues);
+      if (gaps.length > 0) {
+        throwRepairGaps(new z.ZodError(issues as any), gaps);
+      }
+      return parsed;
     },
     formatValidationError(error: unknown): string {
       return formatZodValidationError(error, {
@@ -538,21 +549,21 @@ export function createDesignerOutputProfile(
         'draftTestCases.coveredConditions': 'Each draft test case must list the Analyst conditionIds it covers (use [conditionId] if unsure).',
         'draftTestCases.referencedComponentConditions': 'Integration (testLevel="integration") cases MUST list at least one component condition they assume as a precondition. Use PLAIN condition IDs only (e.g. "C-007"), NOT compound formats like "component:flowId:C-007" or "req-flow:C-007".',
         'draftTestCases.steps': 'Each draft test case needs a non-empty steps array.',
-        'draftTestCases.steps.action': 'action must be a SINGLE operation (<= 200 chars) whose FIRST word is a vocabulary verb (navigate/fill/clear/select/press/click/doubleClick/rightClick/hover/drag/toggle/check/uncheck/upload/scroll/switchTo/dialog/waitFor/verify/extract). NO "while <gerund>", ", then", or "but leave/without" — these signal 2+ bundled actions and are schema-rejected. "both" (e.g. "verify both X and Y are empty") should also be split into separate steps per field/target. Use "verify" (NOT "ensure"/"check that"/"observe") for assertion-only steps.',
+        'draftTestCases.steps.action': 'action must be a SINGLE operation (<= 200 chars) whose FIRST word is a vocabulary verb (navigate/fill/clear/select/press/click/doubleClick/rightClick/hover/drag/toggle/check/uncheck/upload/scroll/switchTo/dialog/waitFor/verify/extract). Compound signals ("while <gerund>", ", then", "but leave/without", "both", semicolons in expected) are FLAGGED for review — they do NOT reject the batch, but the Quality layer will surface them. Use "verify" (NOT "ensure"/"check that"/"observe") for assertion-only steps.',
         'draftTestCases.preconditions': 'preconditions must be concrete, settable system states (data exists, page is loaded) — NOT behavior assertions ("validation works", "UI is functional"). Use referencedComponentConditions for behavior dependencies.',
         'draftTestCases.postconditions': 'Use an array, not null, for postconditions.',
         'draftTestCases.tags': 'Use an array, not null, for tags.',
       });
     },
     extractionHints: [
-      'Step atomicity (HARD constraint — schema validation will reject violations):',
-      '- Each step must have exactly ONE action and ONE observable expected result.',
-      '- `action` must be a SINGLE operation (<= 200 chars). The schema REJECTS these compound signals:',
+      'Step atomicity (quality preference — violations are FLAGGED for review, NOT schema-rejected):',
+      '- Each step should have exactly ONE action and ONE observable expected result.',
+      '- `action` should be a SINGLE operation (<= 200 chars). These compound signals will be flagged:',
       '  "while" + gerund — WRONG: "fill the password field while leaving the username empty" → split: step 1 "verify the username field is empty", step 2 "fill \'test123\' into the password field". (Note: "while" with a state qualifier like "while authenticated session is active" is OK — only "while" + action gerund is compound.)',
       '  ", then" — WRONG: "fill the username field, then click submit" → split: step 1 "fill the username field", step 2 "click submit".',
       '  "but leave/without" — WRONG: "fill the username field but leave the password empty" → split: step 1 "fill the username field", step 2 "verify the password field is empty".',
       '  "both" — WRONG: "verify both username and password fields are empty" → split: step 1 "verify the username field is empty", step 2 "verify the password field is empty".',
-      '- `expected` must be ≤ 200 chars and contain NO semicolons separating multiple assertions.',
+      '- `expected` should be ≤ 200 chars and contain NO semicolons separating multiple assertions.',
       '  WRONG: "button is disabled; error message appears" (two assertions)',
       '  RIGHT: split into two steps — step A expected "button is disabled", step B expected "error message appears".',
       'Precondition quality (F12-precondition):',

@@ -2,9 +2,10 @@ import type { TestGenState } from '../state';
 import type { AgentObserver, SkillDefinition } from './types';
 import type { AIProvider } from '../../infra/provider.ts';
 import { mergeSignals } from '../../infra/provider.ts';
-import { callLLMWithStructuredOutput, toSkillCallRecords } from './utils';
+import { callLLMWithStructuredOutput, toSkillCallRecords, summarizeToolNames } from './utils';
 import { buildDesignerSystemPrompt, buildDesignerUserMessage, type ComponentConditionReference } from '../prompts';
 import { buildDesignerSkills } from '../skills/skills.ts';
+import { createEmitCaseSkill } from '../skills/emit-case-skill.ts';
 import { loadComponentConditions } from '../skills/data-skills.ts';
 import { pipelineRepo } from '../../repository.ts';
 import { createDesignerOutputProfile } from '../structured-output/designer.ts';
@@ -85,11 +86,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
         }
       }
       const componentConditionReferences = [...availableComponentConditions.values()];
-      const outputProfile = createDesignerOutputProfile(conditions.map((condition) => {
-        // F1: derive expectedTestLevel from the new conditionType field
-        // directly. The legacy "testLevel:*" tag in coverageDimensions is
-        // being phased out (the Analyst prompt no longer emits it), so
-        // conditionType is the source of truth.
+      const expectedConditionInfos = conditions.map((condition) => {
         const ct = (condition as any).conditionType;
         const expectedTestLevel: 'component' | 'integration' | undefined =
           ct === 'flow' ? 'integration'
@@ -99,10 +96,20 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
           id: condition.id,
           requirementId: condition.requirementId,
           expectedTestLevel,
-          // F1: forward the new conditionType to the schema validator.
           conditionType: ct,
         };
-      }), componentConditionReferences.map((condition) => condition.referenceId));
+      });
+      const externalComponentRefIds = componentConditionReferences.map((r) => r.referenceId);
+      const outputProfile = createDesignerOutputProfile(expectedConditionInfos, externalComponentRefIds);
+      // F8a: bind emit_case to the current batch conditions so a dangling
+      // conditionId / wrong requirementId / non-component reference is caught
+      // at call time — the model self-corrects in the next ReAct round before
+      // any steps are written, avoiding a Phase 1.25 emit-repair round trip.
+      const boundSkills = opts.skills
+        ? skills
+        : skills.map((s) => s.name === 'emit_case'
+          ? createEmitCaseSkill(expectedConditionInfos, externalComponentRefIds)
+          : s);
 
       const messages = [
         { role: 'system' as const, content: systemPrompt },
@@ -113,7 +120,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       const { output: validated, usage, toolCallRecords } = await callLLMWithStructuredOutput(
         provider,
         messages,
-        skills,
+        boundSkills,
         outputProfile,
         {
           onStep: observer?.onStep,
@@ -138,7 +145,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       log.kv('tokens.cached', usage.cached);
       log.kv('latency', `${latencyMs}ms`);
       if (skillCallCount > 0) {
-        log.kv('skill.details', toolCallRecords!.map(tc => `${tc.name}(completed)`).join(', '));
+        log.kv('skill.details', summarizeToolNames(toolCallRecords!.map(tc => `${tc.name}(completed)`)));
       }
       observer?.onComplete?.(agentName, usage, latencyMs, messages, validated);
 

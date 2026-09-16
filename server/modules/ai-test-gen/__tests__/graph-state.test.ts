@@ -22,7 +22,6 @@ describe('graph/state', () => {
       expect(keys).toContain('businessFlowBlueprints');
       expect(keys).toContain('htmlKnowledgeReference');
       expect(keys).toContain('phase');
-      expect(keys).toContain('errors');
       // Analyst outputs
       expect(keys).toContain('requirementAnalysis');
       expect(keys).toContain('testConditions');
@@ -36,9 +35,6 @@ describe('graph/state', () => {
       // Review
       expect(keys).toContain('humanReviewFeedback');
       // New fields
-      expect(keys).toContain('environmentReady');
-      expect(keys).toContain('initializationLogs');
-      expect(keys).toContain('tokenBudget');
       expect(keys).toContain('skillCalls');
 
       // Only the bounded, persistence-safe reference belongs in checkpoints.

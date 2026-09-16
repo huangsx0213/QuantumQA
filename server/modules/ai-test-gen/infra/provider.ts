@@ -573,7 +573,7 @@ function createOpenAICompatibleProvider(config: ProviderConfig & { type: 'openai
       throw formatSdkError(lastErr, 'openai-compat', agentTag, `endpoint=${config.endpoint || 'default'} model=${config.model}`);
     }
     if (usedMax !== initialMax) {
-      Log.for('provider').warn(`[openai-compat-sdk] max_tokens downgraded ${initialMax} 鈫?${usedMax}${agentTag}`);
+      Log.for('provider').warn(`[openai-compat-sdk] max_tokens downgraded ${initialMax} → ${usedMax}${agentTag}`);
     }
 
     let currentToolCall: { id: string; name: string; args: string } | null = null;

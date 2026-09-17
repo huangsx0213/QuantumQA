@@ -43,11 +43,11 @@ const emitConditionArgsSchema = z.object({
 });
 
 function buildEmitAnalysisAck() {
-  return { ok: true, message: 'Analysis recorded. Emit each test condition now, or finish after all conditions are emitted.' };
+  return { ok: true };
 }
 
 function buildEmitConditionAck(conditionId: string, conditionType: string) {
-  return { ok: true, conditionId, conditionType, message: `Condition ${conditionId} emitted. Emit the next condition, or finish.` };
+  return { ok: true, conditionId, conditionType };
 }
 
 export const emitAnalysisSkill: SkillDefinition = {

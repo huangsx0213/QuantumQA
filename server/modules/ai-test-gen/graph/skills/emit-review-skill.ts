@@ -45,20 +45,11 @@ const emitCoverageRowArgsSchema = z.object({
 });
 
 function buildEmitReviewAck(caseId: string, status: string) {
-  return {
-    ok: true,
-    caseId,
-    status,
-    message: `Review recorded for ${caseId}: ${status}. Review the next case, or finish after all cases are reviewed.`,
-  };
+  return { ok: true, caseId, status };
 }
 
 function buildEmitCoverageRowAck(conditionId: string) {
-  return {
-    ok: true,
-    conditionId,
-    message: `Coverage assessment recorded for ${conditionId}.`,
-  };
+  return { ok: true, conditionId };
 }
 
 export const emitReviewSkill: SkillDefinition = {

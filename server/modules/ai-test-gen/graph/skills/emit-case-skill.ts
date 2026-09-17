@@ -127,12 +127,7 @@ const emitCaseArgsSchema = z.object({
  * Per-call ack 日志由 ReAct 循环按批合并打印（emit_case 常整轮连发，逐条打印刷屏）。
  */
 function buildEmitAck(caseId: string, stepCount: number) {
-  return {
-    ok: true,
-    caseId,
-    stepCount,
-    message: `Case ${caseId} emitted with ${stepCount} step(s). Emit the next case or finish when all cases are declared.`,
-  };
+  return { ok: true, caseId, stepCount };
 }
 
 export const emitCaseSkill: SkillDefinition = {

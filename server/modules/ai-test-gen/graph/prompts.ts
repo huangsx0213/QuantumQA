@@ -27,8 +27,7 @@ function appendHtmlKnowledgePolicy(
   role: HtmlKnowledgePromptRole,
 ): string {
   if (!state.htmlKnowledgeReference) return prompt;
-  return `${prompt.trimEnd()}
-
+  const policyText = `
 ## HTML Knowledge Source-of-Truth Policy
 1. Requirements and acceptance criteria define expected behavior.
 2. Approved flow blueprints define required business-flow semantics.
@@ -42,6 +41,15 @@ function appendHtmlKnowledgePolicy(
 ### Role Guidance
 ${HTML_KNOWLEDGE_ROLE_GUIDANCE[role]}
 `;
+  // Insert BEFORE the dynamic section so the stable policy text joins the
+  // cacheable prefix. The dynamic section is always at the end and starts
+  // with "## Context and Global View".
+  const dynamicMarker = '## Context and Global View';
+  const idx = prompt.indexOf(dynamicMarker);
+  if (idx > 0) {
+    return prompt.slice(0, idx) + policyText.trimEnd() + '\n\n' + prompt.slice(idx);
+  }
+  return prompt.trimEnd() + '\n' + policyText;
 }
 
 /**
@@ -60,7 +68,7 @@ ${HTML_KNOWLEDGE_ROLE_GUIDANCE[role]}
 export function buildContextSection(state: TestGenState, role: 'analyst' | 'designer' | 'quality'): string {
   const lines: string[] = ['## Context and Global View', ''];
 
-  // === Current Batch (role-specific) ===
+  // === Current Batch (role-specific, small summary — always needed) ===
   lines.push('### Current Batch');
   if (role === 'analyst') {
     const batch = state.batchContext;
@@ -98,7 +106,6 @@ export function buildContextSection(state: TestGenState, role: 'analyst' | 'desi
       ? `- User-selected flows: ${state.selectedFlowIds.length}`
       : '- No user-selected flows (derive integration surfaces from requirement dependencies and cross-epic context)');
   } else {
-    // quality
     const draftCases = state.approvedDraftCases ?? state.draftTestCases ?? [];
     const conditions = state.approvedConditions ?? state.testConditions ?? [];
     lines.push(`- Draft Cases: ${draftCases.length}`);
@@ -106,87 +113,46 @@ export function buildContextSection(state: TestGenState, role: 'analyst' | 'desi
     lines.push(`- Project: ${state.projectContext?.name ?? 'Unknown'}`);
   }
 
-  // === Global Index ===
+  // === Cross-Batch Context (on-demand via tool calls) ===
+  // Previously these were full listings injected into the prompt — now reduced
+  // to boolean signals + tool-call directives so the LLM fetches detail only
+  // when needed. Keeps the system prompt's dynamic suffix minimal.
   lines.push('');
-  lines.push('### Global Index');
+  lines.push('### Cross-Batch Context (on demand)');
 
-  // Epic Landscape — Analyst only (Designer/Quality do not receive it).
-  // Inject only a concise per-epic summary for cross-epic risk awareness.
-  // The full story/AC tree is NOT injected: it duplicates the current batch
-  // already present in the user message and bloats the prompt for large epics.
-  // Use `requirement_graph_query` to resolve sibling references on demand.
-  if (role === 'analyst') {
-    if (state.globalEpicIndex) {
-      const stats = state.globalStats;
-      lines.push(`- Epic Landscape: ${stats?.totalEpics ?? 0} epics, ${stats?.totalRequirements ?? 0} requirements, ${stats?.totalFlows ?? 0} flows total`);
-      for (const e of state.globalEpicIndex) {
-        const componentStoryCount = e.storyCount - e.flowCount;
-        lines.push(`  - [Epic] ${e.epicId}: ${e.title} — ${e.storyCount} stories (${componentStoryCount} component + ${e.flowCount} flow), ${e.nonFlowAcCount + e.flowAcCount} ACs (${e.nonFlowAcCount} non-flow + ${e.flowAcCount} flow), status: ${JSON.stringify(e.statusBreakdown)}`);
-      }
-      lines.push('  Use **requirement_graph_query** to inspect sibling requirements/flows outside the current batch when local input is insufficient.');
-    } else {
-      lines.push('- Epic Landscape: Not available');
-    }
-  }
-
-  // Cross-Epic Dependencies — always shown (None when empty)
-  if (state.crossEpicDependencies && state.crossEpicDependencies.length > 0) {
-    lines.push('- Cross-Epic Dependencies:');
-    for (const d of state.crossEpicDependencies) {
-      lines.push(`  - [${d.fromRequirementId}] ${d.relationType} → [${d.toRequirementId}] "${d.toRequirementTitle}" (in Epic "${d.toEpicTitle}")`);
-    }
-    if (role === 'analyst') {
-      lines.push('  Use **cross_epic_impact_query** when relationType suggests shared data/state.');
-    } else if (role === 'designer') {
-      lines.push('  When designing test data and preconditions for conditions whose `requirementId` appears above, account for the cross-epic dependency\'s data/state assumptions — e.g., if a condition depends on a requirement from another Epic, state that assumption explicitly in `preconditions` rather than silently assuming it.');
-    } else {
-      lines.push('  When reviewing completeness, check whether cases for conditions whose `requirementId` appears above acknowledge the cross-epic dependency in their preconditions or test data. Missing cross-epic context is a Completeness gap.');
+  const hasCrossEpic = (state.crossEpicDependencies?.length ?? 0) > 0;
+  if (hasCrossEpic) {
+    lines.push(`- Cross-epic dependencies: ${state.crossEpicDependencies!.length} detected. Call **cross_epic_impact_query** with the relevant \`requirementId\` to inspect details.`);
+    if (role === 'designer') {
+      lines.push('  Account for cross-epic data/state assumptions in `preconditions` — do not silently assume them.');
+    } else if (role === 'quality') {
+      lines.push('  Check whether cases acknowledge cross-epic dependencies in preconditions or test data. Missing cross-epic context is a Completeness gap.');
     }
   } else {
-    lines.push('- Cross-Epic Dependencies: None');
+    lines.push('- Cross-epic dependencies: None');
   }
 
-  // Already Covered — always shown (None when empty)
-  if (state.previousBatchCoverageSummary && state.previousBatchCoverageSummary.length > 0) {
-    lines.push('- Already Covered:');
-    for (const c of state.previousBatchCoverageSummary) {
-      if (role === 'analyst') {
-        lines.push(`  - [${c.requirementId}] ${c.conditionCount} conditions — ${c.categories.join('/')}, ${c.techniques.join('/')}`);
-      } else {
-        lines.push(`  - [${c.requirementId}] ${c.conditionCount} conditions — categories: ${c.categories.join('/')}, techniques: ${c.techniques.join('/')}`);
-      }
-    }
-    if (role === 'analyst') {
-      lines.push('  Use **previous_batch_conditions_query** to inspect titles before deciding to merge/skip.');
-    } else if (role === 'designer') {
-      const reqsWithCases = state.previousBatchCoverageSummary.filter(c => c.caseCountByLevel.component > 0 || c.caseCountByLevel.integration > 0);
-      if (reqsWithCases.length > 0) {
-        lines.push('  Already Generated Cases in Previous Batches (DO NOT DUPLICATE):');
-        for (const c of reqsWithCases) {
-          lines.push(`  - [${c.requirementId}]`);
-          if (c.caseCountByLevel.component > 0) lines.push(`    - component: ${c.caseCountByLevel.component} case(s)`);
-          if (c.caseCountByLevel.integration > 0) lines.push(`    - integration: ${c.caseCountByLevel.integration} case(s)`);
-        }
-        lines.push('  Dedup rule: Counts above show how many cases were already generated per testLevel for each requirement. Before finalizing a draft case, if the relevant requirement already has cases at the same testLevel, call **previous_batch_cases_query** with the `requirementId` to inspect the existing titles and SKIP any near-duplicate (same `conditionId` + `testLevel`). Near-duplicate titles with different `conditionId` are allowed (they test different conditions).');
-      } else {
-        lines.push('  No prior-batch case counts available for dedup reference. If you suspect overlap with earlier batches, call **previous_batch_cases_query** with the `requirementId` to inspect.');
-      }
-    } else {
-      lines.push('  Use this to judge whether the current batch\'s cases are redundant with prior batches. If a case appears to duplicate prior coverage of the same requirement and technique, note it in that requirement\'s `reviewSummary`.');
+  const hasPrevCoverage = (state.previousBatchCoverageSummary?.length ?? 0) > 0;
+  if (hasPrevCoverage) {
+    const reqIds = state.previousBatchCoverageSummary!.map(c => c.requirementId);
+    lines.push(`- Previous-batch coverage: ${reqIds.length} requirement(s) already have conditions (${reqIds.join(', ')}). Call **previous_batch_conditions_query** with a \`requirementId\` to inspect existing conditions before deriving new ones.`);
+    if (role === 'designer') {
+      lines.push('  Before finalizing a draft case, if the relevant requirement already has cases at the same testLevel, call **previous_batch_cases_query** with the `requirementId` to inspect existing titles and SKIP near-duplicates (same `conditionId` + `testLevel`).');
+    } else if (role === 'quality') {
+      lines.push('  If a case appears to duplicate prior coverage, note it in that requirement\'s `reviewSummary`.');
     }
   } else {
-    lines.push('- Already Covered: None');
+    lines.push('- Previous-batch coverage: None (this is the first batch)');
   }
 
-  // Analyst flow-mode cross-reference (only when flow mode + relevant flows +
-  // prior coverage exist)
   if (role === 'analyst') {
+    lines.push('- Epic landscape: call **requirement_graph_query** to inspect sibling requirements/flows outside the current batch.');
     const generationMode = state.generationMode ?? 'component';
-    const isComponentMode = generationMode === 'component';
     const isMixedMode = generationMode === 'mixed';
+    const isComponentMode = generationMode === 'component';
     if (isMixedMode) {
       lines.push('- Mixed Mode Cross-Reference: Component and flow stories are in the SAME batch. Reference component condition IDs directly from your own output for flow `dependencies`. Call **previous_batch_conditions_query** only for requirements from OTHER batches.');
-    } else if (!isComponentMode && state.relevantFlowBlueprints && state.relevantFlowBlueprints.length > 0 && state.previousBatchCoverageSummary && state.previousBatchCoverageSummary.length > 0) {
+    } else if (!isComponentMode && state.relevantFlowBlueprints && state.relevantFlowBlueprints.length > 0 && hasPrevCoverage) {
       lines.push('- Flow Batch Cross-Reference: This batch has flow stories whose component stories were processed earlier. Call **previous_batch_conditions_query** to get real conditionIds for `dependencies` — do NOT invent new conditionIds.');
     }
   }
@@ -369,7 +335,7 @@ All conditions in this phase must have \`conditionType: "flow"\`, include non-em
 
   return `You are a senior ISTQB Test Analyst (CTFL/CTAL Test Analyst level). Perform risk-based analysis of the input and derive a complete, non-redundant set of test conditions using formal ISTQB black-box test design techniques.
 
-${buildContextSection(state, 'analyst')}## Mandatory Tool Usage Workflow
+## Mandatory Tool Usage Workflow
 ${workflowSteps}
 
 ${outputContract}
@@ -377,11 +343,9 @@ ${outputContract}
 ## Available Tools
 ${availableTools}
 
-${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback}` : ''}
-
 ## Output Format — ONE of TWO Modes (MANDATORY — never mix)
 
-**Mode A (preferred) — Tool-Use Structured Output.** Call \`emit_analysis\` ONCE (\`overallApproach\` + \`riskAssessmentSummary\`), then for EACH derived condition call \`emit_condition\` with all its fields. The system assembles \`{ requirementAnalysis, testConditions }\` automatically — do NOT emit a JSON block.
+**Mode A (preferred) — Tool-Use Structured Output.** Call \`emit_analysis\` ONCE (\`overallApproach\` + \`riskAssessmentSummary\`), then call \`emit_condition\` for ALL derived conditions in ONE round (parallel tool calls). The system assembles \`{ requirementAnalysis, testConditions }\` automatically — do NOT emit a JSON block.
 
 **Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end. **Prefer Mode A: Mode B skips the emit tool's enum protection, so any violation costs a whole-batch re-extraction (most expensive, most truncation-prone).**
 
@@ -389,13 +353,16 @@ ${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback
 
 ### Mode A workflow — batch all conditions
 1. \`emit_analysis({ overallApproach, riskAssessmentSummary })\` — once.
-2. For EACH condition: \`emit_condition({ id, requirementId, condition, conditionType, flowStepRefs, category, priority, riskLevel, primaryTechnique, secondaryTechniques, techniqueRationale, coverageDimensions, dependencies, ... })\`.
+2. **ONE round**: call \`emit_condition\` for EVERY derived condition in a single assistant turn (parallel tool calls). Each call carries all fields: \`id, requirementId, condition, conditionType, flowStepRefs, category, priority, riskLevel, primaryTechnique, secondaryTechniques, techniqueRationale, coverageDimensions, dependencies, ...\`.
 3. exit ReAct after the last \`emit_condition\`.
+
+**Do NOT emit one condition per round — that wastes tokens by re-sending the growing conversation for each call. Batch ALL \`emit_condition\` calls into one round, then exit.**
 
 **Tool-enforced rules (API rejects violations):** \`conditionType\` is a closed enum (\`component\` | \`flow\`); flow conditions require non-empty \`flowStepRefs\`.
 
-### Example — Mode A (mixed mode)
+### Example — Mode A (mixed mode, ALL conditions in ONE round)
 \`\`\`
+// Round 1: emit_analysis once, then ALL emit_condition calls in the same round
 emit_analysis({ overallApproach: "...", riskAssessmentSummary: "..." })
 emit_condition({ id: "C-001", requirementId: "STORY-001", condition: "Verify that ...", conditionType: "component", flowStepRefs: [], category: "error", priority: "high", riskLevel: "high", primaryTechnique: "Equivalence Partitioning", secondaryTechniques: [], techniqueRationale: "...", coverageDimensions: ["..."], dependencies: [] })
 emit_condition({ id: "C-002", requirementId: "FLOW-STORY-001", condition: "Verify that ...", conditionType: "flow", flowStepRefs: [{ "flowId": "FLOW-1", "sequence": 1, "actionSummary": "..." }], category: "integration", priority: "critical", riskLevel: "critical", primaryTechnique: "Use Case Testing", secondaryTechniques: ["State Transition Testing"], techniqueRationale: "...", coverageDimensions: ["..."], dependencies: ["C-001"] })
@@ -406,8 +373,9 @@ emit_condition({ id: "C-002", requirementId: "FLOW-STORY-001", condition: "Verif
 ${outputExample}
 \`\`\`
 
-The \`\`\`json block must be at the very end — nothing after it. An empty object \`{}\` is always invalid. In Mode A, exit only after the last \`emit_condition\`.
-`;
+The \`\`\`json block must be at the very end — nothing after it. An empty object \`{}\` is always invalid. In Mode A, ALL \`emit_condition\` calls go in ONE round (parallel tool calls); exit only after the last \`emit_condition\`.
+
+${buildContextSection(state, 'analyst')}`;
 }
 
 /**
@@ -488,11 +456,13 @@ function serializeFlowForQuality(f: any) {
 export function buildAnalystUserMessage(state: TestGenState): string {
   // The analystInput object is pre-built in buildBatchInputState (orchestrator.ts)
   // so we just serialize it here. Falls back to legacy assembly if not available.
-  if (state.analystInput) {
-    return JSON.stringify(state.analystInput, null, 2);
+  const input = state.analystInput
+    ? { ...state.analystInput }
+    : { epic: state.epic, stories: [] };
+  if (state.humanReviewFeedback) {
+    input.previousFeedback = state.humanReviewFeedback;
   }
-  // Legacy fallback (should not be hit after migration)
-  return JSON.stringify({ epic: state.epic, stories: [] }, null, 2);
+  return JSON.stringify(input, null, 2);
 }
 
 // ============================================================
@@ -566,7 +536,7 @@ export function buildDesignerSystemPrompt(state: TestGenState, customPrompt?: st
 function buildDefaultDesignerSystemPrompt(state: TestGenState): string {
   return `You are a senior ISTQB Test Designer (CTFL/CTAL Test Analyst level). Convert each test condition into a complete, executable, independently runnable test case that faithfully implements the condition's assigned technique AND test level.
 
-${buildContextSection(state, 'designer')}## Mandatory Tool Usage Workflow
+## Mandatory Tool Usage Workflow
 ### Step 1 — Verify requirement details
 For EACH condition, call **requirement_detail_query** with its \`requirementId\` (cached, so repeats are cheap). For conditions tagged \`"testLevel:integration"\` or whose \`primaryTechnique\` is Use Case / State Transition, also call **flow_detail_query** to load the associated flow.
 
@@ -657,8 +627,6 @@ FORBIDDEN: \`transient\` (loading states, animations, focus — rewrite as an ob
 - **designer_rules**: load detailed design rules (step atomicity, technique fidelity, test level, F12, F18, F31, F32). Call before designing.
 - **emit_case(...)**: emit ONE complete test case (metadata + its entire steps array) in a single call. See "Output Format" below.
 
-${state.humanReviewFeedback ? `## Previous Feedback\n${state.humanReviewFeedback}` : ''}
-
 ## Output Format — ONE of TWO Modes (MANDATORY — never mix)
 Choose **one** mode for ALL cases in this batch; mixing is rejected as incomplete coverage.
 
@@ -709,7 +677,7 @@ emit_case({ id: "TC-002", title: "Reject login with invalid password format", co
 - Stream your design rationale in plain text BEFORE the first tool call.
 - After ALL \`emit_case\` calls and ReAct exit, the system assembles the final \`draftTestCases\` JSON automatically — do NOT emit a \`\`\`json\`\`\` block in Mode A.
 - Mode B: every \`action\` first word MUST be a vocabulary verb; every \`fill\` MUST carry \`intent.data\`; every \`verify\` MUST carry \`intent.expectation\`. The system repairs common slips deterministically, but the schema still rejects what it cannot repair.
-${buildTechniqueFewShot(state)}
+
 **Rules:**
 - **PICK ONE MODE; never mix.** A partial tool declaration (some cases as tools, others as JSON) is rejected as Mode A incompleteness.
 - Mode A: EVERY case is one \`emit_case\` call (metadata + steps); no JSON block; exit only after the last case.
@@ -717,7 +685,8 @@ ${buildTechniqueFewShot(state)}
 - All design constraints apply in both modes (testData flat, testLevel lowercase, coveredConditions non-empty, referencedComponentConditions real IDs, step atomicity, no semicolons in expected) — see **designer_rules** for details.
 
 Final check before exiting ReAct: every testData entry states its partition/boundary; preconditions self-contained; \`testLevel\` = \`"component"\`/\`"integration"\` AND honored in step design; **integration cases do NOT re-assert what a sibling component case covers**.
-`;
+${buildTechniqueFewShot(state)}
+${buildContextSection(state, 'designer')}`;
 }
 
 export function buildDesignerUserMessage(
@@ -730,11 +699,7 @@ export function buildDesignerUserMessage(
     conditions: conditions.map(c => ({
       id: c.id,
       condition: c.condition,
-      // F1: surface the new conditionType to the Designer so it can decide
-      // coveredConditions vs referencedComponentConditions correctly.
       conditionType: c.conditionType,
-      // F3: when conditionType is "flow", include the step refs so the
-      // Designer can write steps that mirror the actual flow sequence.
       flowStepRefs: c.flowStepRefs ?? [],
       priority: c.priority,
       category: c.category,
@@ -743,17 +708,13 @@ export function buildDesignerUserMessage(
       riskLevel: c.riskLevel,
       requirementId: c.requirementId,
       coverageDimensions: c.coverageDimensions,
-      // Pass Analyst's dataRequirements to Designer so it can reuse
-      // partition/boundary annotations instead of re-deriving them.
       dataRequirements: c.dataRequirements,
     })),
-    // F7: full flow context (same shape as the Analyst receives). The
-    // Designer needs the actionSummary and requirementIds to write steps
-    // that traverse components in the right order.
     businessFlows: flows.map(serializeFlowForDesigner),
     availableComponentConditions: availableComponentConditions.length > 0
       ? availableComponentConditions
       : undefined,
+    ...(state.humanReviewFeedback ? { previousFeedback: state.humanReviewFeedback } : {}),
   }, null, 2);
 }
 
@@ -779,7 +740,8 @@ Your input's \`draftCases\` entries are compact summaries (\`stepCount\` + trunc
 
 ## Load Detailed Rules (MANDATORY)
 Call **quality_rules** to load the complete review dimensions (9 dimensions), discipline rules, redundancy checks (F17/D2), and coverage matrix format (F27). You MUST load this before reviewing any cases.
-${buildContextSection(state, 'quality')}## Available Tools
+
+## Available Tools
 - **requirement_detail_query**: verify requirement details when judging Correctness.
 - **flow_detail_query(flowId)**: load flow step details — use to verify integration test cases against actual flow steps (Correctness dimension).
 - **previous_batch_cases_query**: query previous batch final test cases — use for D2 cross-batch redundancy check (compare titles, testLevel, conditionId against current batch cases).
@@ -795,30 +757,31 @@ ${buildContextSection(state, 'quality')}## Available Tools
 - \`coveredConditions\` / \`referencedComponentConditions\` and each step's \`intent\` are preserved verbatim from the draft (Mode A merges them; Mode B: copy unchanged, never invent \`intent\`) — pull full text via \`draft_case_detail_query\` first.
 - \`testData\` flat strings; \`expected\` single assertion (no semicolons — split into steps) — see **quality_rules** (Clarity / Data Validity).
 
-${state.humanReviewFeedback ? `## Reviewer Feedback\n${state.humanReviewFeedback}` : ''}
-
 ## Output Format — ONE of TWO Modes (MANDATORY — never mix)
 Choose **one** mode for ALL cases. Mixing is rejected as incomplete.
 
-**Mode A (preferred) — Tool-Use Structured Output.** For EACH draft case call \`emit_review\` (status + reviewSummary + changeLog) — even when approving unchanged (\`status: "approved"\`, empty \`changeLog\`). Only include \`steps\`/\`testData\` when you actually change them. Then for EACH Analyst condition call \`emit_coverage_row\` (\`conditionSummary\` + optional \`notes\`). The system assembles \`finalTestCases\` (merging your verdicts onto the draft cases) and computes the coverage matrix \`coveredByCaseIds\`/\`coverageStatus\`/\`testLevel\`/\`primaryTechnique\`/\`category\`/summary deterministically — do NOT emit a JSON block.
+**Mode A (preferred) — Tool-Use Structured Output.** Call \`emit_review\` for ALL draft cases in ONE round (parallel tool calls) — even when approving unchanged (\`status: "approved"\`, empty \`changeLog\`). Only include \`steps\`/\`testData\` when you actually change them. Then call \`emit_coverage_row\` for ALL Analyst conditions in ONE round (\`conditionSummary\` + optional \`notes\`). The system assembles \`finalTestCases\` (merging your verdicts onto the draft cases) and computes the coverage matrix \`coveredByCaseIds\`/\`coverageStatus\`/\`testLevel\`/\`primaryTechnique\`/\`category\`/summary deterministically — do NOT emit a JSON block.
 
 **Mode B (fallback) — Single JSON block.** Only if you cannot use the tools, emit ONE complete \`\`\`json\`\`\` block at the very end (all finalTestCases, all coverageMatrix rows + summary). Semantic correctness is your responsibility — the schema still rejects violations. **Prefer Mode A: Mode B skips the emit tool's enum protection, so any violation costs a whole-batch re-extraction (most expensive, most truncation-prone).**
 
 **FENCELINE: pick one mode before the first tool call. ANY \`emit_\` call locks you into Mode A. If you made NO \`emit_\` call, emit one complete JSON block (Mode B).**
 
-### Mode A workflow
+### Mode A workflow — batch all reviews and coverage rows
 1. Pull full draft text first: \`draft_case_detail_query([...all case ids...])\` so \`intent\` is preserved verbatim.
-2. For EACH case: \`emit_review({ caseId, status, reviewSummary, changeLog })\`. \`status\` ∈ \`approved\` | \`approved_with_changes\` | \`rejected\`. Include \`steps\`/\`testData\` ONLY if you changed them (full replacement). If you split a semicolon-joined \`expected\` into two steps, supply the full replacement \`steps\` array.
-3. For EACH condition: \`emit_coverage_row({ conditionId, conditionSummary, notes? })\`.
+2. **ONE round**: call \`emit_review\` for EVERY draft case in a single assistant turn (parallel tool calls). \`status\` ∈ \`approved\` | \`approved_with_changes\` | \`rejected\`. Include \`steps\`/\`testData\` ONLY if you changed them (full replacement). If you split a semicolon-joined \`expected\` into two steps, supply the full replacement \`steps\` array.
+3. **ONE round**: call \`emit_coverage_row\` for EVERY condition in a single assistant turn (parallel tool calls).
 4. exit ReAct after the last \`emit_coverage_row\`.
+
+**Do NOT emit one entity per round — that wastes tokens by re-sending the growing conversation for each call. Batch all \`emit_review\` calls into one round, then all \`emit_coverage_row\` calls into one round.**
 
 **Tool-enforced rules (API rejects violations):**
 - \`status\` is a closed enum: \`approved\` | \`approved_with_changes\` | \`rejected\`.
 - \`changeLog\` entries: \`{ field, from?, to?, reason (REQUIRED) }\`.
 - \`emit_review.steps\`/\`testData\` are FULL replacements (omit to keep the draft unchanged).
 
-### Example — Mode A: reviewing two cases
+### Example — Mode A: reviewing two cases (ALL calls in ONE round each)
 \`\`\`
+// Round 1: ALL emit_review calls in one assistant turn
 emit_review({ caseId: "TC-001", status: "approved",
   reviewSummary: "coveredConditions=[C-002] matches the flow condition; referencedComponentConditions=[C-001, C-003] names the atomic preconditions. No changes required.",
   changeLog: [] })
@@ -828,18 +791,20 @@ emit_review({ caseId: "TC-002", status: "approved_with_changes",
   changeLog: [ { "field": "testData", "from": "quantity = small number", "to": "quantity = 0 (one below minimum 1)", "reason": "BVA requires the exact boundary value." } ],
   testData: ["quantity = 0 (one below minimum 1)"] })
 
+// Round 2: ALL emit_coverage_row calls in one assistant turn
 emit_coverage_row({ conditionId: "C-002", conditionSummary: "Valid admin credentials propagate through auth API to session store and dashboard" })
 emit_coverage_row({ conditionId: "C-014", conditionSummary: "Quantity below minimum boundary is rejected", notes: "Boundary value corrected during review." })
 \`\`\`
 
 **Rules:**
 - **PICK ONE MODE; never mix.**
-- Mode A: every case is one \`emit_review\` call; every condition is one \`emit_coverage_row\` call; no JSON block; exit only after the last \`emit_coverage_row\`.
+- Mode A: ALL \`emit_review\` calls in ONE round; ALL \`emit_coverage_row\` calls in ONE round; no JSON block; exit only after the last \`emit_coverage_row\`.
 - Mode B: one complete \`\`\`json\`\`\` block (all finalTestCases complete + coverageMatrix), at the very end; zero \`emit_\` calls.
 - MUST NOT change \`testLevel\`; \`testData\` flat; \`expected\` semicolon-free.
 - Every draft case ID gets an \`emit_review\` (rejected cases keep \`status: "rejected"\` + a \`reviewSummary\`; never omitted — even in Mode B).
 - Modified cases have a field-level \`changeLog\`; untouched cases have \`changeLog: []\`.
-`;
+
+${buildContextSection(state, 'quality')}`;
 }
 
 export function buildQualityUserMessage(state: TestGenState): string {
@@ -895,6 +860,7 @@ export function buildQualityUserMessage(state: TestGenState): string {
       categories: c.categories,
       techniques: c.techniques,
     })),
+    ...(state.humanReviewFeedback ? { previousFeedback: state.humanReviewFeedback } : {}),
   }, null, 2);
 }
 

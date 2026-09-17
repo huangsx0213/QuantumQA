@@ -129,9 +129,9 @@ describe('buildAnalystSystemPrompt', () => {
       }],
     } as any);
 
-    // Per-epic one-line summary is present
-    expect(prompt).toContain('[Epic] req-aut-auth: Authentication System');
-    expect(prompt).toContain('1 epics, 79 requirements, 3 flows total');
+    // Epic landscape listing moved to on-demand tool — only a directive remains
+    expect(prompt).not.toContain('[Epic]');
+    expect(prompt).not.toContain('1 epics, 79 requirements');
     // The full story/AC tree is NOT injected (moved to on-demand tool)
     expect(prompt).not.toContain('[Story]');
     expect(prompt).not.toContain('[AC]');

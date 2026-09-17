@@ -73,7 +73,6 @@ export function LoginPage() {
                   id="username"
                   name="username"
                   type="text"
-                  required
                   className="appearance-none block w-full pl-10 px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                   placeholder="Enter username"
                   value={username}
@@ -92,7 +91,6 @@ export function LoginPage() {
                   id="password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
-                  required
                   className="appearance-none block w-full pl-10 pr-10 px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
                   placeholder="Enter password"
                   value={password}

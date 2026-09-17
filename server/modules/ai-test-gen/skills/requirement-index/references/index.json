@@ -4,21 +4,22 @@
     "title": "Authentication System",
     "level": 0,
     "parent": null,
-    "summary": "```md\nSecure login and session management for the AUT application, covering the login UI, input validation, and the end-to-end authentication session flow.\n\nLogin URL: http://localhost:3000/aut/log...",
+    "summary": "Secure login and session management for the AUT application, covering the login UI (form fields, password toggle, remember me, forgot password), input validation (empty fields, invalid credentials,...",
     "tags": [
-      "auth",
-      "user"
+      "auth"
     ],
     "testType": [
       "functional",
       "ui"
     ],
-    "childCount": 4,
+    "childCount": 6,
     "children": [
       "req-aut-auth-login-ui",
       "req-aut-auth-login-validation",
+      "req-aut-auth-route-guard",
       "req-aut-auth-session",
-      "req-aut-auth-login-reports-flow"
+      "req-aut-auth-login-reports-flow",
+      "req-aut-auth-session-guard-flow"
     ],
     "isFlow": false
   },
@@ -27,7 +28,7 @@
     "title": "Login Page UI",
     "level": 0,
     "parent": "req-aut-auth",
-    "summary": "As a user\nI want to log in through a form with a password visibility toggle, remember me checkbox, and forgot password link\nSo that I can securely access my account",
+    "summary": "As a user\nI want to log in through a form with a username input (with User icon), a password input (with Lock icon and visibility toggle), a Remember me checkbox, a Forgot password link, and a Sign...",
     "tags": [
       "auth",
       "user"
@@ -35,12 +36,13 @@
     "testType": [
       "functional"
     ],
-    "childCount": 4,
+    "childCount": 5,
     "children": [
       "req-aut-auth-login-ui-form",
       "req-aut-auth-login-ui-password-toggle",
       "req-aut-auth-login-ui-remember",
-      "req-aut-auth-login-ui-forgot"
+      "req-aut-auth-login-ui-forgot",
+      "req-aut-auth-login-ui-submit-loading"
     ],
     "isFlow": false
   },
@@ -49,7 +51,7 @@
     "title": "Login form display",
     "level": 0,
     "parent": "req-aut-auth-login-ui",
-    "summary": "Given the user navigates to the login page\nWhen the page finishes loading\nThen the login form is displayed with a username input, a password input, and a sigin button",
+    "summary": "Given the user navigates to /aut/login\nWhen the page finishes loading\nThen a login form is displayed with a heading \"Sign in\", a hint \"Use admin / admin123 to login\", a username input (id=\"username...",
     "tags": [
       "auth",
       "user"
@@ -67,7 +69,67 @@
     "title": "Empty field validation",
     "level": 0,
     "parent": "req-aut-auth-login-validation",
-    "summary": "Given the user is on the login page\nWhen the user submits the form with an empty username or password\nThen the error message \"Please fill in all required fields\" is displayed",
+    "summary": "Given the user is on the login page\nWhen the user clicks Sign in with an empty username or empty password\nThen the error message \"Please fill in all required fields.\" is displayed in a red error bo...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-route-guard-redirect",
+    "title": "Unauthenticated access redirects to login",
+    "level": 0,
+    "parent": "req-aut-auth-route-guard",
+    "summary": "Given the user is not authenticated (localStorage does not contain an \"aut_token\" entry)\nWhen the user navigates to any protected route under /aut (e.g., /aut, /aut/users, /aut/reports)\nThen the Pr...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-shell",
+    "title": "Application Shell & Navigation",
+    "level": 0,
+    "parent": "req-aut-dashboard",
+    "summary": "As an authenticated user\nI want a persistent application shell with a sidebar (Target AUT branding, 3 nav items: Home, User Management, Reports, and a Sign Out link) and a header showing the curren...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 5,
+    "children": [
+      "req-aut-shell-sidebar",
+      "req-aut-shell-active-highlight",
+      "req-aut-shell-header",
+      "req-aut-shell-signout",
+      "req-aut-shell-content-area"
+    ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-shell-sidebar",
+    "title": "Sidebar with branding and 3 navigation items",
+    "level": 0,
+    "parent": "req-aut-shell",
+    "summary": "Given the user is authenticated and viewing any protected page\nWhen the user views the left sidebar (w-64, bg-slate-900)\nThen a header section displays a blue shield icon and the text \"Target AUT\"\n...",
     "tags": [
       "auth",
       "user"
@@ -81,32 +143,11 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-dashboard-layout",
-    "title": "Dashboard Layout",
-    "level": 0,
-    "parent": "req-aut-dashboard",
-    "summary": "As an admin\nI want the dashboard to show a welcome banner, quick action links, and stat cards\nSo that I can quickly understand system status and navigate to key sections",
-    "tags": [
-      "dashboard"
-    ],
-    "testType": [
-      "functional",
-      "ui"
-    ],
-    "childCount": 3,
-    "children": [
-      "req-aut-dashboard-layout-welcome",
-      "req-aut-dashboard-layout-quick-actions",
-      "req-aut-dashboard-layout-stat-cards"
-    ],
-    "isFlow": false
-  },
-  {
     "id": "req-aut-dashboard-layout-welcome",
     "title": "Welcome banner",
     "level": 0,
     "parent": "req-aut-dashboard-layout",
-    "summary": "Given the user is logged in and on the dashboard\nWhen the dashboard loads\nThen a welcome banner is displayed with the text \"Welcome back, Admin!\"",
+    "summary": "Given the user is logged in and navigates to /aut\nWhen the dashboard loads\nThen a welcome banner is displayed with the heading \"Welcome back, Admin!\" (id=\"home-welcome\") and the description \"This i...",
     "tags": [
       "dashboard",
       "user"
@@ -120,18 +161,18 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-dashboard-stats-total-users",
-    "title": "Total users count",
+    "id": "req-aut-dashboard-stats-fetch",
+    "title": "Stats API fetch on mount",
     "level": 0,
     "parent": "req-aut-dashboard-stats",
-    "summary": "Given the dashboard statistics are loaded\nWhen the user views the Total Users stat card\nThen the total number of users is displayed",
+    "summary": "Given the user navigates to the dashboard\nWhen the Home component mounts\nThen a GET request is made to /aut-api/dashboard/stats and the response data (totalUsers, activeUsers) is used to populate t...",
     "tags": [
       "dashboard",
+      "api",
       "user"
     ],
     "testType": [
-      "functional",
-      "ui"
+      "functional"
     ],
     "childCount": 0,
     "children": [],
@@ -142,8 +183,10 @@
     "title": "User List & Filtering",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want to view all users in a table and filter them by name, role, and status with Apply and Reset controls\nSo that I can quickly find specific users",
+    "summary": "As an admin\nI want to view all users in a table with checkbox, Name, Email, Role, Status, Created At, Last Modified, and Actions columns, and filter them by name (text search), role (dropdown: All/...",
     "tags": [
+      "email",
+      "search",
       "user",
       "auth"
     ],
@@ -151,23 +194,25 @@
       "functional",
       "ui"
     ],
-    "childCount": 5,
+    "childCount": 6,
     "children": [
       "req-aut-um-list-table",
       "req-aut-um-list-search-name",
       "req-aut-um-list-filter-role",
       "req-aut-um-list-filter-status",
-      "req-aut-um-list-apply-reset"
+      "req-aut-um-list-apply-reset",
+      "req-aut-um-list-empty"
     ],
     "isFlow": false
   },
   {
     "id": "req-aut-um-list-table",
-    "title": "Table display",
+    "title": "Table display with 8 columns",
     "level": 0,
     "parent": "req-aut-um-list",
-    "summary": "Given the user is on the User Management page\nWhen the user list loads\nThen a table is displayed with columns for checkbox, Name, Email, Role, Status, Created At, Last Modified, and Actions",
+    "summary": "Given the user navigates to /aut/users\nWhen the user list loads from GET /aut-api/users\nThen a table is displayed with 8 columns: checkbox (select all), Name (sortable), Email (sortable), Role (sor...",
     "tags": [
+      "api",
       "email",
       "user",
       "auth"
@@ -182,15 +227,19 @@
   },
   {
     "id": "req-aut-um-sorting-pagination-sort",
-    "title": "Column sort",
+    "title": "Column sort with asc/desc toggle",
     "level": 0,
     "parent": "req-aut-um-sorting-pagination",
-    "summary": "Given the user is viewing the user table\nWhen the user clicks a sortable column header\nThen the table is sorted by that column in ascending or descending order with a visual indicator",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks a sortable column header (name, email, role, status, createdAt, or updatedAt)\nThen the table is sorted by that column via GET /aut-api/...",
     "tags": [
-      "user"
+      "api",
+      "email",
+      "user",
+      "auth"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "ui"
     ],
     "childCount": 0,
     "children": [],
@@ -198,10 +247,10 @@
   },
   {
     "id": "req-aut-um-create-simple-modal",
-    "title": "Modal opens",
+    "title": "Quick Add modal opens with default values",
     "level": 0,
     "parent": "req-aut-um-create-simple",
-    "summary": "Given the user is on the User Management page\nWhen the user clicks the Quick Add button\nThen a modal opens with fields for name, email, role, and status",
+    "summary": "Given the user is on the User Management page\nWhen the user clicks the Quick Add button\nThen a modal opens with title \"Quick Add User\", a close button (XCircle), and 4 fields: Full Name * (required...",
     "tags": [
       "email",
       "user",
@@ -217,10 +266,10 @@
   },
   {
     "id": "req-aut-um-create-advanced-sections",
-    "title": "Form sections",
+    "title": "Advanced form opens with 4 sections",
     "level": 0,
     "parent": "req-aut-um-create-advanced",
-    "summary": "Given the user is on the User Management page\nWhen the user clicks the Advanced Add button\nThen a modal opens with four sections: Personal Details, Job Details, Security & Settings, and Profile Pic...",
+    "summary": "Given the user is on the User Management page\nWhen the user clicks the Advanced Add button\nThen a modal opens with title \"Create Complex Profile\" and 4 numbered sections: \"1. Personal Details\", \"2....",
     "tags": [
       "profile",
       "user"
@@ -236,16 +285,19 @@
   },
   {
     "id": "req-aut-um-view-edit-view",
-    "title": "View modal",
+    "title": "View modal with 5 sections",
     "level": 0,
     "parent": "req-aut-um-view-edit",
-    "summary": "Given the user is viewing the user table\nWhen the user clicks the View action (eye icon) on a row\nThen a read-only modal opens displaying all user fields in five sections",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks the View action (Eye icon) on a row\nThen a read-only modal opens with title \"User Profile Details\" and 5 sections: \"1. Personal Details...",
     "tags": [
-      "user"
+      "profile",
+      "email",
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
-      "ui"
+      "security"
     ],
     "childCount": 0,
     "children": [],
@@ -253,10 +305,10 @@
   },
   {
     "id": "req-aut-um-delete-confirm",
-    "title": "Confirm dialog",
+    "title": "Confirm dialog before deletion",
     "level": 0,
     "parent": "req-aut-um-delete",
-    "summary": "Given the user is viewing the user table\nWhen the user clicks the Delete action (trash) on a row\nThen a confirmation dialog is displayed asking the user to confirm the deletion",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks the Delete action (Trash icon) on a row\nThen a browser confirm dialog is displayed with the message \"Are you sure you want to delete th...",
     "tags": [
       "user"
     ],
@@ -270,10 +322,10 @@
   },
   {
     "id": "req-aut-um-batch-select-all",
-    "title": "Select all",
+    "title": "Select all on current page",
     "level": 0,
     "parent": "req-aut-um-batch",
-    "summary": "Given the user is viewing the user table\nWhen the user clicks the header checkbox\nThen all visible users on the current page are selected",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks the header checkbox in the table\nThen all visible users on the current page are selected (their IDs added to selectedIds)\nAnd when clic...",
     "tags": [
       "user"
     ],
@@ -286,11 +338,11 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-drawer-reset",
-    "title": "Reset password",
+    "id": "req-aut-um-drawer-open",
+    "title": "Drawer opens with user info",
     "level": 0,
     "parent": "req-aut-um-drawer",
-    "summary": "Given the user has opened the action drawer for a user\nWhen the user clicks Send Password Reset\nThen a password reset is triggered for the selected user",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks the More Options action (MoveHorizontal icon) on a row\nThen a drawer slides in from the right with a header showing \"User Actions\" and ...",
     "tags": [
       "auth",
       "user"
@@ -307,7 +359,7 @@
     "title": "Reports Dashboard",
     "level": 0,
     "parent": "req-aut-reports",
-    "summary": "As an admin\nI want the reports page to show summary cards, a role pie chart, a department bar chart, and a loading spinner during fetch\nSo that I can visualize user distribution and system metrics",
+    "summary": "As an admin\nI want the reports page to show a page title, 4 summary cards (Total Users, Active Accounts, Admins, Engagement Rate), a donut pie chart for role distribution, a bar chart for departmen...",
     "tags": [
       "dashboard",
       "user",
@@ -319,20 +371,21 @@
     ],
     "childCount": 4,
     "children": [
+      "req-aut-reports-dashboard-loading",
       "req-aut-reports-dashboard-cards",
       "req-aut-reports-dashboard-pie",
-      "req-aut-reports-dashboard-bar",
-      "req-aut-reports-dashboard-loading"
+      "req-aut-reports-dashboard-bar"
     ],
     "isFlow": false
   },
   {
-    "id": "req-aut-reports-dashboard-cards",
-    "title": "Summary cards",
+    "id": "req-aut-reports-dashboard-loading",
+    "title": "Loading spinner during data fetch",
     "level": 0,
     "parent": "req-aut-reports-dashboard",
-    "summary": "Given the user is on the Reports page\nWhen the reports data loads\nThen four summary cards are displayed showing Total Users, Active Accounts, Admins count, and Engagement Rate",
+    "summary": "Given the user navigates to /aut/reports\nWhen the reports data is being fetched from GET /aut-api/reports\nThen a blue spinning loader (animate-spin, border-b-2 border-blue-600) is displayed centere...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -348,7 +401,7 @@
     "title": "Fault Injection Endpoints",
     "level": 0,
     "parent": "req-aut-fault",
-    "summary": "As a tester\nI want fault injection endpoints for timeout, random 500, and XML content type\nSo that I can verify client error handling under adverse conditions",
+    "summary": "As a tester\nI want fault injection endpoints for timeout (5s delay), random 500 (50% probability), and XML content type response\nSo that I can verify client error handling under adverse conditions",
     "tags": [],
     "testType": [
       "functional"
@@ -363,10 +416,10 @@
   },
   {
     "id": "req-aut-fault-endpoints-timeout",
-    "title": "Timeout delay",
+    "title": "Timeout delay endpoint",
     "level": 0,
     "parent": "req-aut-fault-endpoints",
-    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/timeout\nThen the response is delayed by 5 seconds before returning",
+    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/timeout\nThen the server waits 5000ms (5 seconds) before returning { success: true, message: \"Delayed response\" }",
     "tags": [
       "api"
     ],
@@ -382,7 +435,7 @@
     "title": "Happy path: valid credentials authenticate and redirect to dashboard",
     "level": 0,
     "parent": "req-aut-auth-session",
-    "summary": "Given the user is on the login page with valid credentials\nWhen the user enters the credentials and submits the form\nThen the authentication API returns a token, the token is stored in localStorage...",
+    "summary": "Given the user is on the login page with valid credentials (admin/admin123)\nWhen the user enters the credentials and clicks Sign in\nThen the POST /aut-api/auth/login returns { success: true, token:...",
     "tags": [
       "auth",
       "dashboard",
@@ -402,7 +455,26 @@
     "title": "Happy path: login then navigate to reports and verify data loads",
     "level": 0,
     "parent": "req-aut-auth-login-reports-flow",
-    "summary": "Given the user is on the login page\nWhen the user logs in and navigates to the reports page\nThen the reports data loads successfully and the summary cards and charts are displayed",
+    "summary": "Given the user is on the login page\nWhen the user logs in with admin/admin123 and navigates to /aut/reports\nThen a loading spinner is displayed while GET /aut-api/reports fetches data, and once loa...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-session-guard-flow-happy",
+    "title": "Happy path: login, access protected page, sign out, verify redirect and re-access blocked",
+    "level": 0,
+    "parent": "req-aut-auth-session-guard-flow",
+    "summary": "Given the user is on the login page\nWhen the user logs in with admin/admin123 (token stored in localStorage as \"aut_token\"), navigates to /aut/users (protected route renders successfully), then cli...",
     "tags": [
       "auth",
       "user"
@@ -417,12 +489,16 @@
   },
   {
     "id": "req-aut-um-flow-happy",
-    "title": "Happy path: create user, view in list, edit, and verify changes",
+    "title": "Happy path: create user via Quick Add, view in list, edit, and verify changes",
     "level": 0,
     "parent": "req-aut-um-flow",
-    "summary": "Given the admin is on the User Management page\nWhen the admin creates a new user, views it in the list, edits it, and saves the changes\nThen the user record is created, displayed in the list, and t...",
+    "summary": "Given the admin is on the User Management page\nWhen the admin clicks Quick Add, fills in Full Name and Email, selects Role and Status, clicks Save, then views the new user in the table, clicks Edit...",
     "tags": [
-      "user"
+      "profile",
+      "api",
+      "email",
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
@@ -437,7 +513,7 @@
     "title": "Password visibility toggle",
     "level": 0,
     "parent": "req-aut-auth-login-ui",
-    "summary": "Given the user is on the login page\nWhen the user clicks the password visibility toggle\nThen the password field changes from masked to plain text",
+    "summary": "Given the user is on the login page with the password field masked (type=\"password\")\nWhen the user clicks the password visibility toggle button (id=\"toggle-password-btn\")\nThen the password input ty...",
     "tags": [
       "auth",
       "user"
@@ -455,18 +531,21 @@
     "title": "Login Validation",
     "level": 0,
     "parent": "req-aut-auth",
-    "summary": "As a user\nI want the login form to validate my input and show clear error messages for empty fields and invalid credentials\nSo that I can correct mistakes and successfully sign in",
+    "summary": "As a user\nI want the login form to validate my input before and after API submission, showing clear error messages for empty fields, invalid credentials, and network failures\nSo that I can correct ...",
     "tags": [
       "auth",
+      "api",
       "user"
     ],
     "testType": [
       "functional"
     ],
-    "childCount": 2,
+    "childCount": 4,
     "children": [
       "req-aut-auth-login-validation-empty",
-      "req-aut-auth-login-validation-invalid"
+      "req-aut-auth-login-validation-invalid",
+      "req-aut-auth-login-validation-network",
+      "req-aut-auth-login-validation-success"
     ],
     "isFlow": false
   },
@@ -475,7 +554,26 @@
     "title": "Invalid credentials error",
     "level": 0,
     "parent": "req-aut-auth-login-validation",
-    "summary": "Given the user is on the login page\nWhen the user submits the form with invalid credentials\nThen an error message is displayed indicating the credentials are invalid",
+    "summary": "Given the user is on the login page\nWhen the user submits the form with credentials that do not match admin/admin123\nThen the POST /aut-api/auth/login returns 401 with { success: false, error: \"Inv...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-route-guard-allow",
+    "title": "Authenticated access renders protected route",
+    "level": 0,
+    "parent": "req-aut-auth-route-guard",
+    "summary": "Given the user has a non-empty \"aut_token\" value in localStorage\nWhen the user navigates to a protected route under /aut\nThen the ProtectedRoute component renders the protected children (the Layout...",
     "tags": [
       "auth",
       "user"
@@ -493,7 +591,47 @@
     "title": "Dashboard & Home",
     "level": 0,
     "parent": null,
-    "summary": "The home dashboard provides an overview of system status, user statistics, and quick navigation links to other sections of the application.",
+    "summary": "The home dashboard provides an overview of system status, user statistics, and quick navigation links to other sections of the application. Data is fetched from GET /aut-api/dashboard/stats on mount.",
+    "tags": [
+      "dashboard",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 3,
+    "children": [
+      "req-aut-shell",
+      "req-aut-dashboard-layout",
+      "req-aut-dashboard-stats"
+    ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-shell-active-highlight",
+    "title": "Active navigation item highlighting",
+    "level": 0,
+    "parent": "req-aut-shell",
+    "summary": "Given the user is viewing a protected page\nWhen the current URL pathname matches a nav item path (exact match for /aut, or startsWith for /aut/users and /aut/reports)\nThen the matching nav item is ...",
+    "tags": [
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-dashboard-layout",
+    "title": "Dashboard Layout",
+    "level": 0,
+    "parent": "req-aut-dashboard",
+    "summary": "As an admin\nI want the dashboard to show a welcome banner with a description, quick action links to Manage Users and View Reports, and three stat cards for Total Users, Active Sessions, and System ...",
     "tags": [
       "dashboard",
       "user"
@@ -502,10 +640,13 @@
       "functional",
       "ui"
     ],
-    "childCount": 2,
+    "childCount": 5,
     "children": [
-      "req-aut-dashboard-layout",
-      "req-aut-dashboard-stats"
+      "req-aut-dashboard-layout-welcome",
+      "req-aut-dashboard-layout-quick-actions",
+      "req-aut-dashboard-layout-total-users",
+      "req-aut-dashboard-layout-active-sessions",
+      "req-aut-dashboard-layout-system-status"
     ],
     "isFlow": false
   },
@@ -514,7 +655,7 @@
     "title": "Quick action links",
     "level": 0,
     "parent": "req-aut-dashboard-layout",
-    "summary": "Given the user is on the dashboard\nWhen the user views the quick action section\nThen \"Manage Users\" and \"View Reports\" links are displayed",
+    "summary": "Given the user is on the dashboard\nWhen the user views the welcome banner\nThen two action links are displayed: \"Manage Users\" (blue button with ArrowRight icon, navigates to /aut/users) and \"View R...",
     "tags": [
       "dashboard",
       "user"
@@ -528,34 +669,14 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-dashboard-stats",
-    "title": "Dashboard Stats",
-    "level": 0,
-    "parent": "req-aut-dashboard",
-    "summary": "As an admin\nI want the dashboard stat cards to show real-time total users, active sessions, and system status\nSo that I can monitor the current system state at a glance",
-    "tags": [
-      "dashboard",
-      "user"
-    ],
-    "testType": [
-      "functional"
-    ],
-    "childCount": 3,
-    "children": [
-      "req-aut-dashboard-stats-total-users",
-      "req-aut-dashboard-stats-active-sessions",
-      "req-aut-dashboard-stats-system-status"
-    ],
-    "isFlow": false
-  },
-  {
-    "id": "req-aut-dashboard-stats-active-sessions",
-    "title": "Active sessions count",
+    "id": "req-aut-dashboard-stats-loading",
+    "title": "Loading placeholder before data",
     "level": 0,
     "parent": "req-aut-dashboard-stats",
-    "summary": "Given the dashboard statistics are loaded\nWhen the user views the Active Sessions stat card\nThen the number of active sessions is displayed",
+    "summary": "Given the dashboard is fetching stats from the API\nWhen the data has not yet arrived\nThen the Total Users and Active Sessions cards display \"-\" as a placeholder until the real values are loaded",
     "tags": [
       "dashboard",
+      "api",
       "user"
     ],
     "testType": [
@@ -568,11 +689,12 @@
   },
   {
     "id": "req-aut-um-list-search-name",
-    "title": "Name search",
+    "title": "Name search with Apply",
     "level": 0,
     "parent": "req-aut-um-list",
-    "summary": "Given the user is on the User Management page\nWhen the user enters text in the name search input and clicks Apply\nThen the table is filtered to show only users whose names match the search text",
+    "summary": "Given the user is on the User Management page\nWhen the user enters text in the name search input (id=\"filter-name\", placeholder \"e.g. John...\") and clicks Apply\nThen the table is filtered via GET /...",
     "tags": [
+      "api",
       "search",
       "user"
     ],
@@ -589,9 +711,11 @@
     "title": "User Table Sorting & Pagination",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want to sort the user table by columns and paginate through records with page navigation and count info\nSo that I can browse users efficiently regardless of dataset size",
+    "summary": "As an admin\nI want to sort the user table by 6 columns (name, email, role, status, createdAt, updatedAt) with asc/desc toggle, and paginate through records at 10 per page with page navigation and c...",
     "tags": [
-      "user"
+      "email",
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
@@ -607,11 +731,12 @@
   },
   {
     "id": "req-aut-um-sorting-pagination-nav",
-    "title": "Pagination navigation",
+    "title": "Pagination navigation at 10 per page",
     "level": 0,
     "parent": "req-aut-um-sorting-pagination",
-    "summary": "Given the user table contains more users than fit on one page\nWhen the user clicks a page number or prev/next button\nThen the table displays the corresponding page of users",
+    "summary": "Given the user table contains more than 10 users\nWhen the user clicks a page number button or the Previous/Next arrow buttons\nThen the table displays the corresponding page of users via GET /aut-ap...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -624,11 +749,12 @@
   },
   {
     "id": "req-aut-um-create-simple-required",
-    "title": "Required fields",
+    "title": "Required field validation",
     "level": 0,
     "parent": "req-aut-um-create-simple",
-    "summary": "Given the Quick Add modal is open\nWhen the user submits the form without filling in the required fields\nThen validation errors are displayed for the missing required fields",
+    "summary": "Given the Quick Add modal is open\nWhen the user clicks Save with an empty Full Name or Email Address\nThen the browser native validation prevents submission and highlights the missing required fields",
     "tags": [
+      "email",
       "user"
     ],
     "testType": [
@@ -640,12 +766,13 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-create-advanced-cascader",
-    "title": "Cascader",
+    "id": "req-aut-um-create-advanced-personal",
+    "title": "Personal Details section",
     "level": 0,
     "parent": "req-aut-um-create-advanced",
-    "summary": "Given the Advanced Add modal is open\nWhen the user interacts with the department cascader\nThen a three-level cascading selector is displayed (Development → Frontend → React)",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 1\nThen three fields are displayed: Full Name (required text input), Email Address (required email input), and Biography (textarea, 2...",
     "tags": [
+      "email",
       "user"
     ],
     "testType": [
@@ -658,15 +785,17 @@
   },
   {
     "id": "req-aut-um-view-edit-edit",
-    "title": "Edit pre-fill",
+    "title": "Edit form pre-filled with user data",
     "level": 0,
     "parent": "req-aut-um-view-edit",
-    "summary": "Given the user is viewing the user table\nWhen the user clicks the Edit action (pencil) on a row\nThen the edit form opens with all fields pre-filled with the user's current data",
+    "summary": "Given the user is viewing the user table\nWhen the user clicks the Edit action (Pencil icon) on a row\nThen the Advanced form modal opens with title \"Edit Complex Profile\" and all fields (Personal De...",
     "tags": [
+      "profile",
       "user"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "security"
     ],
     "childCount": 0,
     "children": [],
@@ -674,11 +803,12 @@
   },
   {
     "id": "req-aut-um-delete-success",
-    "title": "Delete success",
+    "title": "Delete success with toast",
     "level": 0,
     "parent": "req-aut-um-delete",
-    "summary": "Given the delete confirmation dialog is displayed\nWhen the user confirms the deletion\nThen the user is deleted and a success toast is displayed",
+    "summary": "Given the delete confirmation dialog is displayed\nWhen the user confirms the deletion\nThen a DELETE request is sent to /aut-api/users/:id, the response confirms success, a success toast \"User delet...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -690,11 +820,11 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-batch-activate",
-    "title": "Batch activate",
+    "id": "req-aut-um-batch-action-bar",
+    "title": "Batch action bar appears on selection",
     "level": 0,
     "parent": "req-aut-um-batch",
-    "summary": "Given multiple users are selected\nWhen the user clicks the Activate All button\nThen all selected users have their status set to active",
+    "summary": "Given one or more users are selected via checkbox\nWhen the selection count is greater than 0\nThen a blue batch action bar appears at the bottom of the table showing a \"N Selected\" badge (with count...",
     "tags": [
       "user"
     ],
@@ -706,27 +836,30 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-drawer-export",
-    "title": "Export data",
+    "id": "req-aut-um-drawer-reset",
+    "title": "Send Password Reset",
     "level": 0,
     "parent": "req-aut-um-drawer",
-    "summary": "Given the user has opened the action drawer for a user\nWhen the user clicks Export User Data\nThen the user's data is downloaded as a JSON file",
+    "summary": "Given the action drawer is open for a user\nWhen the user clicks \"Send Password Reset\" in the Account Management section\nThen a POST request is sent to /aut-api/users/:id/reset-password, a success t...",
     "tags": [
+      "api",
+      "auth",
       "user"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "ui"
     ],
     "childCount": 0,
     "children": [],
     "isFlow": false
   },
   {
-    "id": "req-aut-reports-dashboard-pie",
-    "title": "Pie chart",
+    "id": "req-aut-reports-dashboard-cards",
+    "title": "Four summary cards",
     "level": 0,
     "parent": "req-aut-reports-dashboard",
-    "summary": "Given the user is on the Reports page\nWhen the reports data loads\nThen a pie chart is displayed showing User Role Distribution across admin, editor, and viewer segments",
+    "summary": "Given the reports data has loaded\nWhen the user views the summary cards section\nThen 4 cards are displayed in a row: \"Total Users\" (Users icon, blue, value from data.totalUsers), \"Active Accounts\" ...",
     "tags": [
       "user",
       "auth"
@@ -741,10 +874,10 @@
   },
   {
     "id": "req-aut-fault-endpoints-500",
-    "title": "Random 500",
+    "title": "Random 500 error endpoint",
     "level": 0,
     "parent": "req-aut-fault-endpoints",
-    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/simulate-500\nThen the endpoint returns a 500 error with approximately 50% probability",
+    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/simulate-500\nThen the endpoint returns HTTP 500 with { success: false, error: \"Simulated strict internal fail...",
     "tags": [
       "api"
     ],
@@ -760,7 +893,26 @@
     "title": "Exception: invalid credentials show error and allow retry",
     "level": 0,
     "parent": "req-aut-auth-session",
-    "summary": "Given the user is on the login page with invalid credentials\nWhen the user enters the credentials and submits the form\nThen an error message is shown and the user can retry the login",
+    "summary": "Given the user is on the login page with invalid credentials (e.g., wrong password)\nWhen the user enters the credentials and clicks Sign in\nThen the POST /aut-api/auth/login returns 401 with { succ...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-session-guard-flow-blocked",
+    "title": "Exception: direct URL access to protected route without token redirects to login",
+    "level": 0,
+    "parent": "req-aut-auth-session-guard-flow",
+    "summary": "Given the user is not authenticated (no \"aut_token\" in localStorage, e.g., new browser session or after sign out)\nWhen the user enters a protected URL directly in the address bar (e.g., /aut, /aut/...",
     "tags": [
       "auth",
       "user"
@@ -775,11 +927,12 @@
   },
   {
     "id": "req-aut-um-flow-batch",
-    "title": "Alternate: select multiple users, batch activate, and verify status changed",
+    "title": "Alternate: select multiple inactive users, batch activate, and verify status changed",
     "level": 0,
     "parent": "req-aut-um-flow",
-    "summary": "Given the admin has selected multiple users on the User Management page\nWhen the admin performs a batch activate operation\nThen all selected users have their status changed to active",
+    "summary": "Given the admin has selected multiple inactive users via checkbox on the User Management page\nWhen the admin clicks the Activate All button in the batch action bar\nThen a POST request is sent to /a...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -795,7 +948,7 @@
     "title": "Remember me checkbox",
     "level": 0,
     "parent": "req-aut-auth-login-ui",
-    "summary": "Given the user is on the login page\nWhen the user views the login form\nThen a \"Remember me\" checkbox is displayed below the password field",
+    "summary": "Given the user is on the login page\nWhen the user views the login form below the password field\nThen a \"Remember me\" checkbox (id=\"remember-me\") is displayed in a row alongside the \"Forgot password...",
     "tags": [
       "auth",
       "user"
@@ -809,13 +962,14 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-dashboard-layout-stat-cards",
-    "title": "Stat cards layout",
+    "id": "req-aut-auth-login-validation-network",
+    "title": "Network error handling",
     "level": 0,
-    "parent": "req-aut-dashboard-layout",
-    "summary": "Given the user is on the dashboard\nWhen the dashboard loads\nThen three stat cards are displayed for Total Users, Active Sessions, and System Status",
+    "parent": "req-aut-auth-login-validation",
+    "summary": "Given the user submits the login form\nWhen the fetch request to /aut-api/auth/login throws a network error (e.g., server unreachable)\nThen the error message \"Network error occurred\" is displayed in...",
     "tags": [
-      "dashboard",
+      "auth",
+      "api",
       "user"
     ],
     "testType": [
@@ -827,13 +981,52 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-dashboard-stats-system-status",
-    "title": "System status indicator",
+    "id": "req-aut-auth-route-guard",
+    "title": "Route Guard & Session Protection",
     "level": 0,
-    "parent": "req-aut-dashboard-stats",
-    "summary": "Given the dashboard statistics are loaded\nWhen the user views the System Status stat card\nThen the system status is displayed indicating the system is online",
+    "parent": "req-aut-auth",
+    "summary": "As a user\nI want protected routes to check for a valid authentication token in localStorage and redirect unauthenticated users to the login page, and a Sign Out action that clears the token\nSo that...",
     "tags": [
-      "dashboard",
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 4,
+    "children": [
+      "req-aut-auth-route-guard-redirect",
+      "req-aut-auth-route-guard-allow",
+      "req-aut-auth-route-guard-signout",
+      "req-aut-auth-route-guard-login-public"
+    ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-route-guard-signout",
+    "title": "Sign Out clears token and redirects to login",
+    "level": 0,
+    "parent": "req-aut-auth-route-guard",
+    "summary": "Given the user is authenticated and viewing the application shell\nWhen the user clicks the \"Sign Out\" link in the sidebar footer\nThen localStorage.removeItem(\"aut_token\") is called to clear the tok...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-shell-header",
+    "title": "Header displays current page label",
+    "level": 0,
+    "parent": "req-aut-shell",
+    "summary": "Given the user is viewing a protected page\nWhen the user views the top header bar (h-16, bg-white, border-b)\nThen the header displays the label of the current nav item (\"Home\" for /aut, \"User Manag...",
+    "tags": [
       "user"
     ],
     "testType": [
@@ -842,6 +1035,47 @@
     ],
     "childCount": 0,
     "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-dashboard-layout-total-users",
+    "title": "Total Users stat card",
+    "level": 0,
+    "parent": "req-aut-dashboard-layout",
+    "summary": "Given the dashboard has loaded data from GET /aut-api/dashboard/stats\nWhen the user views the first stat card\nThen a card with Users icon (blue background) is displayed showing the heading \"Total U...",
+    "tags": [
+      "dashboard",
+      "api",
+      "user",
+      "auth"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-dashboard-stats",
+    "title": "Dashboard Stats Data Loading",
+    "level": 0,
+    "parent": "req-aut-dashboard",
+    "summary": "As an admin\nI want the dashboard stat cards to fetch real-time data from the backend API on page mount\nSo that I can monitor the current system state at a glance",
+    "tags": [
+      "dashboard",
+      "api"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 2,
+    "children": [
+      "req-aut-dashboard-stats-fetch",
+      "req-aut-dashboard-stats-loading"
+    ],
     "isFlow": false
   },
   {
@@ -849,12 +1083,18 @@
     "title": "User Management",
     "level": 0,
     "parent": null,
-    "summary": "Comprehensive user management covering list and filtering, sorting and pagination, simple and advanced creation forms, view and edit, delete, batch operations, the action drawer, and the end-to-end...",
+    "summary": "Comprehensive user management covering list and filtering (name search, role/status dropdowns, Apply/Reset), sorting and pagination (6 sortable columns, 10 per page, page info), Quick Add modal (na...",
     "tags": [
+      "profile",
+      "email",
+      "search",
+      "auth",
       "user"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "security",
+      "ui"
     ],
     "childCount": 9,
     "children": [
@@ -872,11 +1112,12 @@
   },
   {
     "id": "req-aut-um-list-filter-role",
-    "title": "Role filter",
+    "title": "Role filter dropdown",
     "level": 0,
     "parent": "req-aut-um-list",
-    "summary": "Given the user is on the User Management page\nWhen the user selects a role from the Role dropdown and clicks Apply\nThen the table is filtered to show only users with the selected role",
+    "summary": "Given the user is on the User Management page\nWhen the user selects a role from the Role dropdown (id=\"filter-role\", options: All Roles, Admin, Editor, Viewer) and clicks Apply\nThen the table is fi...",
     "tags": [
+      "api",
       "user",
       "auth"
     ],
@@ -890,10 +1131,10 @@
   },
   {
     "id": "req-aut-um-sorting-pagination-info",
-    "title": "Page info",
+    "title": "Page info display",
     "level": 0,
     "parent": "req-aut-um-sorting-pagination",
-    "summary": "Given the user is viewing a paginated user table\nWhen the user views the pagination section\nThen the current page and total record count information is displayed",
+    "summary": "Given the user is viewing a paginated user table\nWhen the user views the pagination section\nThen the text \"Showing X to Y of Z users\" is displayed where X is the first record number on the current ...",
     "tags": [
       "user"
     ],
@@ -907,10 +1148,10 @@
   },
   {
     "id": "req-aut-um-create-simple",
-    "title": "User Creation - Simple Form",
+    "title": "User Creation - Quick Add Modal",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want a Quick Add modal with minimal fields for name, email, role, and status\nSo that I can rapidly create new users without filling out a long form",
+    "summary": "As an admin\nI want a Quick Add modal (title \"Quick Add User\") with minimal fields for Full Name (required), Email Address (required), Role (dropdown: Administrator/Editor/Viewer, default Viewer), a...",
     "tags": [
       "api",
       "email",
@@ -921,21 +1162,23 @@
       "functional",
       "ui"
     ],
-    "childCount": 3,
+    "childCount": 4,
     "children": [
       "req-aut-um-create-simple-modal",
       "req-aut-um-create-simple-required",
-      "req-aut-um-create-simple-save"
+      "req-aut-um-create-simple-save",
+      "req-aut-um-create-simple-cancel"
     ],
     "isFlow": false
   },
   {
     "id": "req-aut-um-create-simple-save",
-    "title": "Save success",
+    "title": "Save creates user and shows toast",
     "level": 0,
     "parent": "req-aut-um-create-simple",
-    "summary": "Given the Quick Add modal is open with valid data\nWhen the user clicks Save\nThen the user is created, a success toast is displayed, and the table is refreshed",
+    "summary": "Given the Quick Add modal is open with valid data\nWhen the user clicks Save\nThen a POST request is sent to /aut-api/users with the form data, the response user is created with auto-generated id and...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -947,19 +1190,17 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-create-advanced-permissions",
-    "title": "Permissions",
+    "id": "req-aut-um-create-advanced-cascader",
+    "title": "Department cascader with 3-level hierarchy",
     "level": 0,
     "parent": "req-aut-um-create-advanced",
-    "summary": "Given the Advanced Add modal is open\nWhen the user views the Security & Settings section\nThen permission checkboxes are displayed for view_reports, manage_users, billing_access, and api_access",
+    "summary": "Given the Advanced Add modal is open\nWhen the user clicks the Department cascader in section 2\nThen a 3-level cascading selector is displayed with options: Development → Frontend → {React, Vue} or ...",
     "tags": [
-      "api",
-      "user",
-      "auth"
+      "search",
+      "user"
     ],
     "testType": [
       "functional",
-      "security",
       "ui"
     ],
     "childCount": 0,
@@ -968,10 +1209,65 @@
   },
   {
     "id": "req-aut-um-view-edit-save",
-    "title": "Save update",
+    "title": "Save update via PUT request",
     "level": 0,
     "parent": "req-aut-um-view-edit",
-    "summary": "Given the edit form is open with modified data\nWhen the user clicks Save\nThen the user record is updated and a success toast is displayed",
+    "summary": "Given the Edit form is open with modified data\nWhen the user clicks Save Profile\nThen a PUT request is sent to /aut-api/users/:id with the modified form data, the user record is updated with a new ...",
+    "tags": [
+      "profile",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-delete-failure",
+    "title": "Delete failure toast",
+    "level": 0,
+    "parent": "req-aut-um-delete",
+    "summary": "Given the user confirms deletion\nWhen the DELETE request to /aut-api/users/:id fails or returns an error\nThen a failure toast \"Delete failed\" is displayed",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-batch-activate",
+    "title": "Batch activate when all selected are inactive",
+    "level": 0,
+    "parent": "req-aut-um-batch",
+    "summary": "Given multiple inactive users are selected\nWhen the user clicks the Activate All button (emerald, shown only when all selected are inactive)\nThen a POST request is sent to /aut-api/users/batch-upda...",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-drawer-export",
+    "title": "Export User Data as JSON",
+    "level": 0,
+    "parent": "req-aut-um-drawer",
+    "summary": "Given the action drawer is open for a user\nWhen the user clicks \"Export User Data\" in the Account Management section\nThen the user's data is downloaded as a JSON file named \"user_<id>_export.json\" ...",
     "tags": [
       "user"
     ],
@@ -984,61 +1280,14 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-delete-refresh",
-    "title": "Table refresh",
-    "level": 0,
-    "parent": "req-aut-um-delete",
-    "summary": "Given a user has been successfully deleted\nWhen the deletion completes\nThen the user table is refreshed and the deleted user no longer appears in the list",
-    "tags": [
-      "user"
-    ],
-    "testType": [
-      "functional"
-    ],
-    "childCount": 0,
-    "children": [],
-    "isFlow": false
-  },
-  {
-    "id": "req-aut-um-batch-deactivate",
-    "title": "Batch deactivate",
-    "level": 0,
-    "parent": "req-aut-um-batch",
-    "summary": "Given multiple users are selected\nWhen the user clicks the Deactivate All button\nThen all selected users have their status set to inactive",
-    "tags": [
-      "user"
-    ],
-    "testType": [
-      "functional"
-    ],
-    "childCount": 0,
-    "children": [],
-    "isFlow": false
-  },
-  {
-    "id": "req-aut-um-drawer-suspend",
-    "title": "Suspend account",
-    "level": 0,
-    "parent": "req-aut-um-drawer",
-    "summary": "Given the user has opened the action drawer for a user\nWhen the user clicks Suspend Account\nThen the selected user's status is set to inactive",
-    "tags": [
-      "user"
-    ],
-    "testType": [
-      "functional"
-    ],
-    "childCount": 0,
-    "children": [],
-    "isFlow": false
-  },
-  {
-    "id": "req-aut-reports-dashboard-bar",
-    "title": "Bar chart",
+    "id": "req-aut-reports-dashboard-pie",
+    "title": "Donut pie chart for User Role Distribution",
     "level": 0,
     "parent": "req-aut-reports-dashboard",
-    "summary": "Given the user is on the Reports page\nWhen the reports data loads\nThen a bar chart is displayed showing Users by Department",
+    "summary": "Given the reports data has loaded\nWhen the user views the first chart\nThen a donut pie chart titled \"User Role Distribution\" is displayed with innerRadius=60, outerRadius=80, paddingAngle=5, showin...",
     "tags": [
-      "user"
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
@@ -1050,10 +1299,10 @@
   },
   {
     "id": "req-aut-fault-endpoints-xml",
-    "title": "XML content",
+    "title": "XML content type endpoint",
     "level": 0,
     "parent": "req-aut-fault-endpoints",
-    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/xml-content\nThen the response is returned with an XML content type",
+    "summary": "Given the fault injection API is available\nWhen a request is made to GET /aut-api/fault/xml-content\nThen the response is returned with Content-Type header set to \"application/xml\" and the body is a...",
     "tags": [
       "api"
     ],
@@ -1065,34 +1314,14 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-auth-session",
-    "title": "Authentication Session",
-    "level": 0,
-    "parent": "req-aut-auth",
-    "summary": "As a user\nI want the authentication session to handle login, token storage, and redirect on success, with retry on failure\nSo that I can securely access the application after authentication",
-    "tags": [
-      "auth",
-      "user"
-    ],
-    "testType": [
-      "functional"
-    ],
-    "childCount": 3,
-    "children": [
-      "req-aut-auth-session-happy",
-      "req-aut-auth-session-invalid",
-      "req-aut-auth-session-empty"
-    ],
-    "isFlow": true
-  },
-  {
     "id": "req-aut-auth-session-empty",
     "title": "Exception: empty fields block form submission with validation error",
     "level": 0,
     "parent": "req-aut-auth-session",
-    "summary": "Given the user is on the login page\nWhen the user submits the form without filling in all required fields\nThen a validation error is shown and the form is not submitted",
+    "summary": "Given the user is on the login page\nWhen the user clicks Sign in without filling in the username or password\nThen the error message \"Please fill in all required fields.\" is displayed in the red err...",
     "tags": [
       "auth",
+      "api",
       "user"
     ],
     "testType": [
@@ -1108,12 +1337,14 @@
     "title": "Exception: delete user and verify removed from list",
     "level": 0,
     "parent": "req-aut-um-flow",
-    "summary": "Given the admin is viewing the user list\nWhen the admin deletes a user\nThen the user is removed from the list",
+    "summary": "Given the admin is viewing the user list\nWhen the admin clicks the Delete action on a row and confirms the dialog \"Are you sure you want to delete this user?\"\nThen a DELETE request is sent to /aut-...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "ui"
     ],
     "childCount": 0,
     "children": [],
@@ -1124,7 +1355,7 @@
     "title": "Forgot password link",
     "level": 0,
     "parent": "req-aut-auth-login-ui",
-    "summary": "Given the user is on the login page\nWhen the user views the login form\nThen a \"Forgot password?\" link is displayed below the password field",
+    "summary": "Given the user is on the login page\nWhen the user views the login form below the password field\nThen a \"Forgot password?\" link is displayed on the right side of the Remember me row with blue text a...",
     "tags": [
       "auth",
       "user"
@@ -1138,12 +1369,104 @@
     "isFlow": false
   },
   {
+    "id": "req-aut-auth-login-validation-success",
+    "title": "Successful login with token storage and redirect",
+    "level": 0,
+    "parent": "req-aut-auth-login-validation",
+    "summary": "Given the user enters username \"admin\" and password \"admin123\"\nWhen the user submits the form\nThen the POST /aut-api/auth/login returns { success: true, token: \"fake-jwt-token-12345\", user: { id: 1...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-route-guard-login-public",
+    "title": "Login page is publicly accessible without token",
+    "level": 0,
+    "parent": "req-aut-auth-route-guard",
+    "summary": "Given the user is not authenticated\nWhen the user navigates to /aut/login\nThen the LoginPage component is rendered directly (not wrapped in ProtectedRoute) and no redirect occurs, allowing the user...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-shell-signout",
+    "title": "Sign Out link in sidebar footer",
+    "level": 0,
+    "parent": "req-aut-shell",
+    "summary": "Given the user is viewing any protected page\nWhen the user views the sidebar footer section (border-t border-slate-800)\nThen a \"Sign Out\" link with a LogOut icon is displayed\nAnd when clicked, the ...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-dashboard-layout-active-sessions",
+    "title": "Active Sessions stat card",
+    "level": 0,
+    "parent": "req-aut-dashboard-layout",
+    "summary": "Given the dashboard has loaded data from GET /aut-api/dashboard/stats\nWhen the user views the second stat card\nThen a card with Bell icon (emerald background) is displayed showing the heading \"Acti...",
+    "tags": [
+      "dashboard",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
     "id": "req-aut-um-list-filter-status",
-    "title": "Status filter",
+    "title": "Status filter dropdown",
     "level": 0,
     "parent": "req-aut-um-list",
-    "summary": "Given the user is on the User Management page\nWhen the user selects a status from the Status dropdown and clicks Apply\nThen the table is filtered to show only users with the selected status",
+    "summary": "Given the user is on the User Management page\nWhen the user selects a status from the Status dropdown (id=\"filter-status\", options: All Statuses, Active, Inactive) and clicks Apply\nThen the table i...",
     "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-create-simple-cancel",
+    "title": "Cancel closes modal without saving",
+    "level": 0,
+    "parent": "req-aut-um-create-simple",
+    "summary": "Given the Quick Add modal is open\nWhen the user clicks the Cancel button or the XCircle close button\nThen the modal closes and no API request is sent",
+    "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -1159,9 +1482,10 @@
     "title": "User Creation - Advanced Form",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want an Advanced Add form with Personal Details, Job Details, Security & Settings, and Profile Picture sections including a cascading department selector, permissions checkboxes, acce...",
+    "summary": "As an admin\nI want an Advanced Add form (title \"Create Complex Profile\") with 4 sections: Personal Details (Full Name, Email, Biography), Job Details (Role, Department cascader, Contract Period, Sh...",
     "tags": [
       "profile",
+      "email",
       "user",
       "auth"
     ],
@@ -1169,29 +1493,33 @@
       "functional",
       "security"
     ],
-    "childCount": 6,
+    "childCount": 10,
     "children": [
       "req-aut-um-create-advanced-sections",
+      "req-aut-um-create-advanced-personal",
       "req-aut-um-create-advanced-cascader",
+      "req-aut-um-create-advanced-job-details",
       "req-aut-um-create-advanced-permissions",
-      "req-aut-um-create-advanced-2fa",
-      "req-aut-um-create-advanced-slider",
+      "req-aut-um-create-advanced-access-slider",
+      "req-aut-um-create-advanced-2fa-status",
+      "req-aut-um-create-advanced-profile-pic",
+      "req-aut-um-create-advanced-verify",
       "req-aut-um-create-advanced-save"
     ],
     "isFlow": false
   },
   {
-    "id": "req-aut-um-create-advanced-2fa",
-    "title": "2FA toggle",
+    "id": "req-aut-um-create-advanced-job-details",
+    "title": "Job Details section with Role, Contract Period, and Shift Time",
     "level": 0,
     "parent": "req-aut-um-create-advanced",
-    "summary": "Given the Advanced Add modal is open\nWhen the user views the Security & Settings section\nThen a 2FA toggle switch is displayed",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 2\nThen four fields are displayed: Role (select with options \"Administrator (Full Access)\", \"Editor (Write Access)\", \"Viewer (Read On...",
     "tags": [
-      "user"
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
-      "security",
       "ui"
     ],
     "childCount": 0,
@@ -1199,16 +1527,36 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-batch-delete",
-    "title": "Batch delete",
+    "id": "req-aut-um-batch-deactivate",
+    "title": "Batch deactivate when all selected are active",
     "level": 0,
     "parent": "req-aut-um-batch",
-    "summary": "Given multiple users are selected\nWhen the user clicks the Delete Selected button and confirms\nThen all selected users are deleted",
+    "summary": "Given multiple active users are selected\nWhen the user clicks the Deactivate All button (gray, shown only when all selected are active)\nThen a POST request is sent to /aut-api/users/batch-update wi...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-drawer-suspend",
+    "title": "Suspend Account with confirmation",
+    "level": 0,
+    "parent": "req-aut-um-drawer",
+    "summary": "Given the action drawer is open for a user\nWhen the user clicks \"Suspend Account\" in the Danger Zone section and confirms the dialog \"Are you sure you want to suspend this account?\"\nThen a PATCH re...",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
     ],
     "childCount": 0,
     "children": [],
@@ -1219,13 +1567,15 @@
     "title": "Reports & Analytics",
     "level": 0,
     "parent": null,
-    "summary": "Visual data reports including summary cards, a pie chart for user role distribution, a bar chart for users by department, and a loading state during data fetch.",
+    "summary": "Visual data reports page (title \"System Reports\") fetched from GET /aut-api/reports, including 4 summary cards (Total Users, Active Accounts, Admins, Engagement Rate), a donut pie chart for User Ro...",
     "tags": [
+      "api",
       "user",
       "auth"
     ],
     "testType": [
-      "functional"
+      "functional",
+      "ui"
     ],
     "childCount": 1,
     "children": [
@@ -1234,11 +1584,11 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-reports-dashboard-loading",
-    "title": "Loading state",
+    "id": "req-aut-reports-dashboard-bar",
+    "title": "Bar chart for Users by Department",
     "level": 0,
     "parent": "req-aut-reports-dashboard",
-    "summary": "Given the user navigates to the Reports page\nWhen the reports data is being fetched\nThen a loading spinner is displayed until the data is loaded",
+    "summary": "Given the reports data has loaded\nWhen the user views the second chart\nThen a bar chart titled \"Users by Department\" is displayed with CartesianGrid (dashed horizontal lines), XAxis (dataKey=\"name\"...",
     "tags": [
       "user"
     ],
@@ -1251,31 +1601,68 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-auth-login-reports-flow",
-    "title": "Login to Reports Journey",
+    "id": "req-aut-auth-session",
+    "title": "Authentication Session",
     "level": 0,
     "parent": "req-aut-auth",
-    "summary": "As a user\nI want to log in and navigate to the reports page to view summary data\nSo that I can review system metrics after authentication",
+    "summary": "As a user\nI want the authentication session to handle login form submission, API authentication, token storage in localStorage, and redirect on success, with error display and retry on failure\nSo t...",
+    "tags": [
+      "auth",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 3,
+    "children": [
+      "req-aut-auth-session-happy",
+      "req-aut-auth-session-invalid",
+      "req-aut-auth-session-empty"
+    ],
+    "isFlow": true
+  },
+  {
+    "id": "req-aut-um-flow-drawer",
+    "title": "Alternate: open action drawer, export user data, and suspend account",
+    "level": 0,
+    "parent": "req-aut-um-flow",
+    "summary": "Given the admin is viewing the user list\nWhen the admin clicks the More Options icon, opens the action drawer, clicks Export User Data, then reopens the drawer and clicks Suspend Account and confir...",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-login-ui-submit-loading",
+    "title": "Submit button loading state",
+    "level": 0,
+    "parent": "req-aut-auth-login-ui",
+    "summary": "Given the user has submitted the login form with credentials\nWhen the authentication request is in progress\nThen the submit button text changes to \"Signing in...\", the button is disabled (cursor-no...",
     "tags": [
       "auth",
       "user"
     ],
     "testType": [
-      "functional",
-      "ui"
+      "functional"
     ],
-    "childCount": 1,
-    "children": [
-      "req-aut-auth-login-reports-flow-happy"
-    ],
-    "isFlow": true
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
   },
   {
-    "id": "req-aut-um-list-apply-reset",
-    "title": "Apply and Reset",
+    "id": "req-aut-shell-content-area",
+    "title": "Content area renders matched route via Outlet",
     "level": 0,
-    "parent": "req-aut-um-list",
-    "summary": "Given the user has applied filters on the User Management page\nWhen the user clicks the Reset button\nThen all filters are cleared and the table shows all users",
+    "parent": "req-aut-shell",
+    "summary": "Given the user is viewing a protected page\nWhen the user navigates between /aut, /aut/users, and /aut/reports\nThen the main content area (flex-1, p-8, overflow-auto) renders the corresponding page ...",
     "tags": [
       "user"
     ],
@@ -1288,13 +1675,50 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-create-advanced-slider",
-    "title": "Access slider",
+    "id": "req-aut-dashboard-layout-system-status",
+    "title": "System Status stat card",
     "level": 0,
-    "parent": "req-aut-um-create-advanced",
-    "summary": "Given the Advanced Add modal is open\nWhen the user views the Security & Settings section\nThen an access level slider ranging from 1 to 5 is displayed",
+    "parent": "req-aut-dashboard-layout",
+    "summary": "Given the dashboard has loaded\nWhen the user views the third stat card\nThen a card with Settings icon (purple background) is displayed showing the heading \"System Status\", a green pulsing dot, the ...",
+    "tags": [
+      "dashboard",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-list-apply-reset",
+    "title": "Apply and Reset filter controls",
+    "level": 0,
+    "parent": "req-aut-um-list",
+    "summary": "Given the user has entered filter values on the User Management page\nWhen the user clicks the Apply button (dark background with Filter icon)\nThen the filters are applied and the page resets to pag...",
     "tags": [
       "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-create-advanced-permissions",
+    "title": "Security permissions checkboxes",
+    "level": 0,
+    "parent": "req-aut-um-create-advanced",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 3\nThen 4 permission checkboxes are displayed in a 2-column grid: View Reports, Manage Users, Billing Access, and API Access, each in...",
+    "tags": [
+      "api",
+      "user",
+      "auth"
     ],
     "testType": [
       "functional",
@@ -1310,8 +1734,9 @@
     "title": "User View & Edit",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want to view user details in a read-only modal and edit users through a pre-filled form\nSo that I can review and update user records accurately",
+    "summary": "As an admin\nI want to view user details in a read-only modal (title \"User Profile Details\") with 5 sections and edit users through a pre-filled Advanced form (title \"Edit Complex Profile\")\nSo that ...",
     "tags": [
+      "profile",
       "user"
     ],
     "testType": [
@@ -1326,12 +1751,13 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-batch-mixed",
-    "title": "Mixed status warning",
+    "id": "req-aut-um-batch-delete",
+    "title": "Batch delete with confirmation",
     "level": 0,
     "parent": "req-aut-um-batch",
-    "summary": "Given users with mixed active and inactive statuses are selected\nWhen the user views the batch operation bar\nThen a warning badge is displayed and the Activate All and Deactivate All buttons are di...",
+    "summary": "Given multiple users are selected\nWhen the user clicks the Delete Selected button (red border) and confirms the dialog \"Are you sure you want to delete N users?\"\nThen a POST request is sent to /aut...",
     "tags": [
+      "api",
       "user"
     ],
     "testType": [
@@ -1343,11 +1769,28 @@
     "isFlow": false
   },
   {
+    "id": "req-aut-um-drawer-delete",
+    "title": "Permanently Delete from drawer",
+    "level": 0,
+    "parent": "req-aut-um-drawer",
+    "summary": "Given the action drawer is open for a user\nWhen the user clicks \"Permanently Delete\" in the Danger Zone section and confirms the dialog\nThen a DELETE request is sent to /aut-api/users/:id, the user...",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
     "id": "req-aut-fault",
     "title": "Fault Injection",
     "level": 0,
     "parent": null,
-    "summary": "Endpoints designed for testing error handling, timeouts, and content type variations in automated tests, including a 5-second delay, a random 500 error, and an XML content type response.",
+    "summary": "Endpoints designed for testing error handling, timeouts, and content type variations in automated tests, including a 5-second delay endpoint, a random 500 error endpoint with 50% probability, and a...",
     "tags": [],
     "testType": [
       "functional"
@@ -1359,11 +1802,49 @@
     "isFlow": false
   },
   {
-    "id": "req-aut-um-create-advanced-save",
-    "title": "Save",
+    "id": "req-aut-auth-login-reports-flow",
+    "title": "Login to Reports Journey",
+    "level": 0,
+    "parent": "req-aut-auth",
+    "summary": "As a user\nI want to log in and navigate to the reports page to view summary data, charts, and loading states\nSo that I can review system metrics after authentication",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 1,
+    "children": [
+      "req-aut-auth-login-reports-flow-happy"
+    ],
+    "isFlow": true
+  },
+  {
+    "id": "req-aut-um-list-empty",
+    "title": "Empty state and loading skeleton",
+    "level": 0,
+    "parent": "req-aut-um-list",
+    "summary": "Given the user is on the User Management page\nWhen the table is loading and no users exist yet\nThen skeleton rows with pulse animation are displayed\nAnd when the API returns zero users\nThen a cente...",
+    "tags": [
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-create-advanced-access-slider",
+    "title": "Access Level slider 1-5",
     "level": 0,
     "parent": "req-aut-um-create-advanced",
-    "summary": "Given the Advanced Add modal is open with valid data\nWhen the user clicks Save\nThen the user is created and a success toast is displayed",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 3\nThen an Access Level range slider (min=1, max=5, default=3) is displayed with a badge showing \"Level N\" that updates as the slider...",
     "tags": [
       "user"
     ],
@@ -1380,7 +1861,7 @@
     "title": "User Delete",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want to delete users with a confirmation dialog and see a success toast and refreshed table\nSo that I can remove users safely without accidental deletion",
+    "summary": "As an admin\nI want to delete users via a browser confirm dialog (\"Are you sure you want to delete this user?\") and see a success toast and refreshed table\nSo that I can remove users safely without ...",
     "tags": [
       "user"
     ],
@@ -1391,8 +1872,64 @@
     "children": [
       "req-aut-um-delete-confirm",
       "req-aut-um-delete-success",
-      "req-aut-um-delete-refresh"
+      "req-aut-um-delete-failure"
     ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-batch-mixed",
+    "title": "Mixed status warning disables activate/deactivate",
+    "level": 0,
+    "parent": "req-aut-um-batch",
+    "summary": "Given users with mixed active and inactive statuses are selected\nWhen the user views the batch action bar\nThen an amber warning badge is displayed with the text \"Mixed statuses: Batch status update...",
+    "tags": [
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-auth-session-guard-flow",
+    "title": "Session Guard & Sign Out Journey",
+    "level": 0,
+    "parent": "req-aut-auth",
+    "summary": "As a user\nI want the session guard to block unauthorized access and the sign-out action to fully terminate my session\nSo that my account remains secure after logout and protected pages cannot be ac...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 2,
+    "children": [
+      "req-aut-auth-session-guard-flow-happy",
+      "req-aut-auth-session-guard-flow-blocked"
+    ],
+    "isFlow": true
+  },
+  {
+    "id": "req-aut-um-create-advanced-2fa-status",
+    "title": "Account Status radio and 2FA toggle",
+    "level": 0,
+    "parent": "req-aut-um-create-advanced",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 3\nThen an Account Status radio group is displayed with two options: Active (emerald) and Inactive (gray, default)\nAnd a Two-Factor A...",
+    "tags": [
+      "auth",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
     "isFlow": false
   },
   {
@@ -1400,21 +1937,57 @@
     "title": "Batch Operations",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want to select multiple users and perform batch activate, deactivate, or delete operations with a mixed-status warning\nSo that I can manage many users efficiently",
+    "summary": "As an admin\nI want to select multiple users via individual checkboxes or select-all, and perform batch activate, deactivate, or delete operations with a mixed-status warning badge and a Deselect op...",
     "tags": [
       "user"
     ],
     "testType": [
       "functional"
     ],
-    "childCount": 5,
+    "childCount": 7,
     "children": [
       "req-aut-um-batch-select-all",
+      "req-aut-um-batch-action-bar",
       "req-aut-um-batch-activate",
       "req-aut-um-batch-deactivate",
       "req-aut-um-batch-delete",
-      "req-aut-um-batch-mixed"
+      "req-aut-um-batch-mixed",
+      "req-aut-um-batch-deselect"
     ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-batch-deselect",
+    "title": "Deselect clears all selections",
+    "level": 0,
+    "parent": "req-aut-um-batch",
+    "summary": "Given one or more users are selected\nWhen the user clicks the Deselect link in the batch action bar\nThen all selections are cleared (selectedIds becomes empty) and the batch action bar disappears",
+    "tags": [
+      "user"
+    ],
+    "testType": [
+      "functional"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-create-advanced-profile-pic",
+    "title": "Profile Picture drag-and-drop upload",
+    "level": 0,
+    "parent": "req-aut-um-create-advanced",
+    "summary": "Given the Advanced Add modal is open\nWhen the user views section 4\nThen a drag-and-drop zone is displayed with a dashed border, Upload icon, and text \"Drag an image here or Browse\"\nAnd when a file ...",
+    "tags": [
+      "profile",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
     "isFlow": false
   },
   {
@@ -1422,7 +1995,7 @@
     "title": "User Action Drawer",
     "level": 0,
     "parent": "req-aut-um",
-    "summary": "As an admin\nI want a slide-in drawer with per-user actions for password reset, data export, and account suspension\nSo that I can perform administrative actions without leaving the user list",
+    "summary": "As an admin\nI want a slide-in drawer (from right, max-w-sm) with per-user actions for Send Password Reset, Export User Data, Suspend Account, and Permanently Delete, organized in Account Management...",
     "tags": [
       "auth",
       "user"
@@ -1430,12 +2003,33 @@
     "testType": [
       "functional"
     ],
-    "childCount": 3,
+    "childCount": 5,
     "children": [
+      "req-aut-um-drawer-open",
       "req-aut-um-drawer-reset",
       "req-aut-um-drawer-export",
-      "req-aut-um-drawer-suspend"
+      "req-aut-um-drawer-suspend",
+      "req-aut-um-drawer-delete"
     ],
+    "isFlow": false
+  },
+  {
+    "id": "req-aut-um-create-advanced-verify",
+    "title": "Verify User Data async validation",
+    "level": 0,
+    "parent": "req-aut-um-create-advanced",
+    "summary": "Given the Advanced Add modal is open\nWhen the user clicks the \"Verify User Data\" button\nThen the button text changes to \"Running Security Check...\" and is disabled for 3 seconds\nAnd after 3 seconds...",
+    "tags": [
+      "email",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "security",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
     "isFlow": false
   },
   {
@@ -1450,12 +2044,32 @@
     "testType": [
       "functional"
     ],
-    "childCount": 3,
+    "childCount": 4,
     "children": [
       "req-aut-um-flow-happy",
       "req-aut-um-flow-batch",
-      "req-aut-um-flow-delete"
+      "req-aut-um-flow-delete",
+      "req-aut-um-flow-drawer"
     ],
     "isFlow": true
+  },
+  {
+    "id": "req-aut-um-create-advanced-save",
+    "title": "Save Profile creates user",
+    "level": 0,
+    "parent": "req-aut-um-create-advanced",
+    "summary": "Given the Advanced Add modal is open with valid data\nWhen the user clicks Save Profile\nThen a POST request is sent to /aut-api/users with the form data (excluding avatar), the user is created, the ...",
+    "tags": [
+      "profile",
+      "api",
+      "user"
+    ],
+    "testType": [
+      "functional",
+      "ui"
+    ],
+    "childCount": 0,
+    "children": [],
+    "isFlow": false
   }
 ]

@@ -123,7 +123,7 @@ describe('Stagehand v3 + _enableRecorder compatibility POC', () => {
     'Test 1: Stagehand act() via CDP-connected Playwright + _enableRecorder',
     async () => {
       const { Stagehand } = await import('@browserbasehq/stagehand');
-      const { chromium } = await import('playwright-core');
+      const { chromium } = await import('playwright');
       const { PlaywrightRecorderAdapter } = await import('../adapter');
 
       const config = getStagehandConfig();
@@ -223,7 +223,7 @@ describe('Stagehand v3 + _enableRecorder compatibility POC', () => {
     'Test 1b: Stagehand act() fill + select + navigate + _enableRecorder',
     async () => {
       const { Stagehand } = await import('@browserbasehq/stagehand');
-      const { chromium } = await import('playwright-core');
+      const { chromium } = await import('playwright');
       const { PlaywrightRecorderAdapter } = await import('../adapter');
 
       const config = getStagehandConfig();

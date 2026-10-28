@@ -152,6 +152,6 @@ describe("ACCard", () => {
         })
       )
     );
-    expect(screen.getByTitle("Click to cycle status")).toHaveTextContent("APPROVED");
+    expect(screen.getByTitle("Change AC status")).toHaveValue("APPROVED");
   });
 });

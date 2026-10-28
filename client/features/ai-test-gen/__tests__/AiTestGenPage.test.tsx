@@ -18,6 +18,7 @@ const queryHookMocks = vi.hoisted(() => ({
   useCheckpoint: vi.fn(),
   useAgentLogs: vi.fn(),
   useProviderConfigs: vi.fn(),
+  usePrdDocuments: vi.fn().mockReturnValue({ data: [] }),
 }));
 
 vi.mock('@/shared/ui/HelpTooltip', () => ({
@@ -42,6 +43,7 @@ vi.mock('@/shared/hooks/useQueryHooks', () => ({
   useCheckpoint: queryHookMocks.useCheckpoint,
   useAgentLogs: queryHookMocks.useAgentLogs,
   useProviderConfigs: queryHookMocks.useProviderConfigs,
+  usePrdDocuments: queryHookMocks.usePrdDocuments,
 }));
 
 const mockSaveCheckpointEdits = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true }));
@@ -58,6 +60,7 @@ const promptApi = vi.hoisted(() => ({
   savePromptOverride: vi.fn(),
   deletePromptOverride: vi.fn(),
 }));
+const mockGetLatestRunPrompts = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 
 vi.mock('@/shared/services/api', () => ({
   api: {
@@ -75,6 +78,7 @@ vi.mock('@/shared/services/api', () => ({
       promptOverrides: promptApi.promptOverrides,
       savePromptOverride: promptApi.savePromptOverride,
       deletePromptOverride: promptApi.deletePromptOverride,
+      getLatestRunPrompts: mockGetLatestRunPrompts,
     },
   },
 }));
@@ -483,6 +487,13 @@ describe('AiTestGenPage', () => {
   });
 
   it('shows html_knowledge_query in all three dynamic agent tool lists', async () => {
+    mockGetLatestRunPrompts.mockResolvedValueOnce([
+      {
+        agent_name: 'test_analyst',
+        status: 'COMPLETED',
+        input_prompt: [{ role: 'system', content: 'test prompt' }],
+      },
+    ]);
     renderWithProviders(<AiTestGenPage {...defaultProps} />);
     fireEvent.click(screen.getByRole('button', { name: 'Agent Prompts' }));
     const toolsButton = await screen.findByRole('button', { name: /Available Tools/ });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useId, useMemo, useRef } from 'react';
-import { ChevronRight, ChevronDown, Play, FileText, GitBranch, Settings2, Zap, CheckCircle, History } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronsUpDown, Play, FileText, GitBranch, Settings2, Zap, CheckCircle, History, Search } from 'lucide-react';
 import type { Requirement } from '../../../shared/contracts/index';
-import { useProviderConfigs, useTestGenRuns } from '../../shared/hooks/useQueryHooks';
+import { useProviderConfigs, useTestGenRuns, usePrdDocuments } from '../../shared/hooks/useQueryHooks';
 import { parseStoryMarkdown } from '../../shared/requirements/format-parser';
 import { parseACMarkdown } from '../../shared/requirements/format-parser';
 import { FormatSegmentBlock } from '../requirements/FormatSegmentBlock';
@@ -71,6 +71,17 @@ function collectLeafIds(node: TreeNode): string[] {
   return node.children.flatMap(collectLeafIds);
 }
 
+function collectExpandableIds(nodes: TreeNode[]): string[] {
+  const ids: string[] = [];
+  for (const node of nodes) {
+    if (node.children.length > 0) {
+      ids.push(node.req.id);
+      ids.push(...collectExpandableIds(node.children));
+    }
+  }
+  return ids;
+}
+
 const levelDotColors: Record<string, string> = {
   epic: 'bg-purple-500',
   story: 'bg-emerald-500',
@@ -82,21 +93,24 @@ function RequirementTreeNode({
   selectedFlowIds,
   onToggle,
   onToggleFlow,
-  forceExpanded,
+  expandedIds,
+  onToggleExpand,
   selectedStoryId,
   onSelectStory,
+  prdDocMap,
 }: {
   node: TreeNode;
   selectedIds: Set<string>;
   selectedFlowIds: Set<string>;
   onToggle: (ids: string[]) => void;
   onToggleFlow: (flowStoryId: string, referencedComponentStoryIds: string[]) => void;
-  forceExpanded: boolean;
+  expandedIds: Set<string>;
+  onToggleExpand: (id: string) => void;
   selectedStoryId: string | null;
   onSelectStory: (id: string | null) => void;
+  prdDocMap?: Map<string, any>;
 }) {
-  const [selfExpanded, setSelfExpanded] = useState(forceExpanded);
-  const expanded = selfExpanded;
+  const expanded = expandedIds.has(node.req.id);
   const hasChildren = node.children.length > 0;
   const allDescendantIds = hasChildren ? collectLeafIds(node) : [node.req.id];
   const isFlowStory = node.req.level === 'story' && node.req.isFlow;
@@ -121,10 +135,6 @@ function RequirementTreeNode({
   const labelRef = useRef<HTMLSpanElement>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const isSelected = node.req.id === selectedStoryId;
-
-  useEffect(() => {
-    setSelfExpanded(forceExpanded);
-  }, [forceExpanded]);
 
   const handleTitleMouseEnter = () => {
     if (labelRef.current && labelRef.current.scrollWidth > labelRef.current.clientWidth) {
@@ -153,7 +163,15 @@ function RequirementTreeNode({
         onClick={() => { onSelectStory(isSelected ? null : node.req.id); }}
       >
         {hasChildren ? (
-          <button onClick={(e) => { e.stopPropagation(); setSelfExpanded(!expanded); }} className="shrink-0 -ml-1 p-1 hover:bg-slate-200/70 rounded-md transition-colors">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleExpand(node.req.id);
+            }}
+            className="shrink-0 -ml-1 p-1 hover:bg-slate-200/70 rounded-md transition-colors"
+            title={expanded ? 'Collapse' : 'Expand'}
+            aria-label={expanded ? 'Collapse' : 'Expand'}
+          >
             {expanded ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-400" />}
           </button>
         ) : (
@@ -204,6 +222,19 @@ function RequirementTreeNode({
             </span>
           </>
         )}
+        {node.req.documentId && (
+          (() => {
+            const doc = prdDocMap?.get(node.req.documentId);
+            const tooltip = doc
+              ? `PRD: ${doc.title}${doc.currentVersionTag ? ` (${doc.currentVersionTag})` : ''}${node.req.sourceAnchor ? ` · ${node.req.sourceAnchor}` : ''}`
+              : (node.req.sourceAnchor ? `PRD: ${node.req.sourceAnchor}` : 'Linked to PRD document');
+            return (
+              <span title={tooltip} className="inline-flex items-center">
+                <FileText size={11} className="text-blue-500/80 shrink-0" />
+              </span>
+            );
+          })()
+        )}
         <span
           ref={labelRef}
           className={`flex-1 min-w-0 truncate ${
@@ -225,9 +256,11 @@ function RequirementTreeNode({
               selectedFlowIds={selectedFlowIds}
               onToggle={onToggle}
               onToggleFlow={onToggleFlow}
-              forceExpanded={forceExpanded}
+              expandedIds={expandedIds}
+              onToggleExpand={onToggleExpand}
               selectedStoryId={selectedStoryId}
               onSelectStory={onSelectStory}
+              prdDocMap={prdDocMap}
             />
           ))}
         </div>
@@ -282,11 +315,17 @@ export function TestGenConfigPanel({
   const startFeedbackId = useId();
   const { data: providerConfigs = [] } = useProviderConfigs();
   const { data: pastRuns = [] } = useTestGenRuns(projectId);
+  const { data: prdDocs = [] } = usePrdDocuments(projectId);
+  const prdDocMap = useMemo(() => {
+    return new Map((prdDocs || []).map((doc: any) => [doc.id, doc]));
+  }, [prdDocs]);
   const savedConfig = useMemo(() => loadConfig(), []);
 
   const [selectedReqs, setSelectedReqs] = useState<Set<string>>(new Set());
   const [selectedFlows, setSelectedFlows] = useState<Set<string>>(new Set());
   const [selectedStoryId, setSelectedStoryId] = useState<string | null>(null);
+  const [selectedDocIdFilter, setSelectedDocIdFilter] = useState<string>('all');
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [referenceRunIds, setReferenceRunIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<'auto' | 'interactive'>(savedConfig?.mode ?? defaultConfig.mode);
   const [showApprovedOnly, setShowApprovedOnly] = useState(savedConfig?.showApprovedOnly ?? defaultConfig.showApprovedOnly);
@@ -295,7 +334,7 @@ export function TestGenConfigPanel({
   // to avoid silently carrying over selections across sessions (which caused
   // unexpected batch splitting when a previous run had a different epic selection).
 
-  const [expandAll, setExpandAll] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedModel, setSelectedModel] = useState(savedConfig?.selectedModel ?? defaultConfig.selectedModel);
   const [modelName, setModelName] = useState(savedConfig?.modelName ?? defaultConfig.modelName);
   const [modelOpen, setModelOpen] = useState(false);
@@ -361,7 +400,94 @@ export function TestGenConfigPanel({
     });
   }, [mode, showApprovedOnly, selectedModel, modelName, useCache, reasoningEffort, reasoningSummary, textVerbosity]);
 
-  const tree = useMemo(() => buildTree(requirements), [requirements]);
+  const filteredRequirements = useMemo(() => {
+    let base = requirements;
+    if (selectedDocIdFilter !== 'all') {
+      const matchedIds = new Set<string>();
+      if (selectedDocIdFilter.startsWith('doc:')) {
+        const docId = selectedDocIdFilter.slice(4);
+        requirements.filter((r) => r.documentId === docId).forEach((r) => matchedIds.add(r.id));
+      } else if (selectedDocIdFilter.startsWith('ver:')) {
+        const verId = selectedDocIdFilter.slice(4);
+        requirements
+          .filter((r) => r.documentVersionId === verId || (r.versionIds && r.versionIds.includes(verId)))
+          .forEach((r) => matchedIds.add(r.id));
+      } else {
+        requirements.filter((r) => r.documentId === selectedDocIdFilter).forEach((r) => matchedIds.add(r.id));
+      }
+
+      // Trace ancestors up to root so hierarchy remains intact even if parent was from previous version
+      const itemMap = new Map(requirements.map((i) => [i.id, i]));
+      const matchedWithAncestors = new Set<string>(matchedIds);
+      for (const id of matchedIds) {
+        let curr = itemMap.get(id);
+        while (curr && curr.parentId) {
+          matchedWithAncestors.add(curr.parentId);
+          curr = itemMap.get(curr.parentId);
+        }
+      }
+      base = requirements.filter((r) => matchedWithAncestors.has(r.id));
+    }
+
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return base;
+
+    // Find direct matching IDs
+    const directMatches = new Set<string>();
+    for (const r of base) {
+      if (
+        r.title.toLowerCase().includes(term) ||
+        r.description.toLowerCase().includes(term) ||
+        r.id.toLowerCase().includes(term)
+      ) {
+        directMatches.add(r.id);
+      }
+    }
+
+    // Trace ancestors up to root so hierarchy remains intact
+    const itemMap = new Map(requirements.map((i) => [i.id, i]));
+    const matchedWithAncestors = new Set<string>(directMatches);
+    for (const id of directMatches) {
+      let curr = itemMap.get(id);
+      while (curr && curr.parentId) {
+        matchedWithAncestors.add(curr.parentId);
+        curr = itemMap.get(curr.parentId);
+      }
+    }
+    return base.filter((r) => matchedWithAncestors.has(r.id));
+  }, [requirements, selectedDocIdFilter, searchTerm]);
+
+  const isFiltering = Boolean(searchTerm.trim() || selectedDocIdFilter !== 'all');
+  const tree = useMemo(() => buildTree(filteredRequirements), [filteredRequirements]);
+  const expandableIds = useMemo(() => collectExpandableIds(tree), [tree]);
+  const allExpanded = expandableIds.length > 0 && expandableIds.every(id => expandedIds.has(id));
+
+  const handleToggleExpand = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleExpandAll = () => {
+    if (allExpanded) {
+      setExpandedIds(new Set());
+    } else {
+      setExpandedIds(new Set(expandableIds));
+    }
+  };
+
+  // Auto-expand tree when filtering by PRD document or searching
+  useEffect(() => {
+    if (isFiltering && expandableIds.length > 0) {
+      setExpandedIds(new Set(expandableIds));
+    }
+  }, [selectedDocIdFilter, searchTerm]);
 
   const completedRuns = useMemo(() => {
     return pastRuns.filter((r: any) => r.status === 'COMPLETED');
@@ -408,6 +534,9 @@ export function TestGenConfigPanel({
     setSelectedReqs(new Set());
     setSelectedFlows(new Set());
     setReferenceRunIds(new Set());
+    setSelectedDocIdFilter('all');
+    setSearchTerm('');
+    setExpandedIds(new Set());
   };
 
   const handleStart = () => {
@@ -471,40 +600,110 @@ export function TestGenConfigPanel({
           )}
         </div>
         <div className="flex-1 flex flex-col px-4 pt-3 pb-4 overflow-hidden">
+          {/* Search and PRD Filter Dropdown */}
+          <div className="space-y-1.5 mb-3">
+            <div className="relative">
+              <Search
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+                size={14}
+              />
+              <input
+                type="text"
+                placeholder="Filter requirements..."
+                className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-slate-700"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            {/* Document & Version filter dropdown - only displayed when documents exist */}
+            {prdDocs.length > 0 && (
+              <div className="relative">
+                <select
+                  value={selectedDocIdFilter}
+                  onChange={(e) => setSelectedDocIdFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 truncate cursor-pointer"
+                  title="Filter requirements tree by PRD Document or Version"
+                >
+                  <option value="all">
+                    All Documents &amp; Versions ({requirements.length} items)
+                  </option>
+                  {prdDocs.map((doc: any) => {
+                    const docCount = requirements.filter((r) => r.documentId === doc.id).length;
+                    const versions = doc.versions || [];
+                    return (
+                      <optgroup
+                        key={doc.id}
+                        label={`${doc.title} (${doc.currentVersionTag || 'v1.0'})`}
+                      >
+                        <option value={`doc:${doc.id}`}>
+                          All Versions of &quot;{doc.title}&quot; ({docCount} items)
+                        </option>
+                        {versions.map((v: any) => {
+                          const vCount = requirements.filter(
+                            (r) => r.documentVersionId === v.id || (r.versionIds && r.versionIds.includes(v.id))
+                          ).length;
+                          return (
+                            <option key={v.id} value={`ver:${v.id}`}>
+                              └ {v.versionTag || `v${v.versionNumber}`} · {v.fileName} ({vCount} items)
+                            </option>
+                          );
+                        })}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between mb-3">
             <label className="flex items-center gap-2 text-xs text-slate-500 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={(() => {
-                  const componentStories = requirements.filter(r => r.level === 'story' && !r.isFlow);
-                  const flowStoriesList = requirements.filter(r => r.level === 'story' && r.isFlow);
+                  const componentStories = filteredRequirements.filter(r => r.level === 'story' && !r.isFlow);
+                  const flowStoriesList = filteredRequirements.filter(r => r.level === 'story' && r.isFlow);
                   return componentStories.length + flowStoriesList.length > 0
                     && componentStories.every(r => selectedReqs.has(r.id))
                     && flowStoriesList.every(r => selectedFlows.has(r.id));
                 })()}
                 ref={el => {
                   if (el) {
-                    const componentStories = requirements.filter(r => r.level === 'story' && !r.isFlow);
-                    const flowStoriesList = requirements.filter(r => r.level === 'story' && r.isFlow);
+                    const componentStories = filteredRequirements.filter(r => r.level === 'story' && !r.isFlow);
+                    const flowStoriesList = filteredRequirements.filter(r => r.level === 'story' && r.isFlow);
                     const total = componentStories.length + flowStoriesList.length;
                     const selectedCount = componentStories.filter(r => selectedReqs.has(r.id)).length + flowStoriesList.filter(r => selectedFlows.has(r.id)).length;
                     el.indeterminate = selectedCount > 0 && selectedCount < total;
                   }
                 }}
                 onChange={() => {
-                  const componentStories = requirements.filter(r => r.level === 'story' && !r.isFlow);
-                  const flowStoriesList = requirements.filter(r => r.level === 'story' && r.isFlow);
+                  const componentStories = filteredRequirements.filter(r => r.level === 'story' && !r.isFlow);
+                  const flowStoriesList = filteredRequirements.filter(r => r.level === 'story' && r.isFlow);
                   const allComponentSelected = componentStories.every(r => selectedReqs.has(r.id));
                   const allFlowSelected = flowStoriesList.every(r => selectedFlows.has(r.id));
                   if (allComponentSelected && allFlowSelected) {
-                    setSelectedReqs(new Set());
-                    setSelectedFlows(new Set());
+                    setSelectedReqs(prev => {
+                      const next = new Set(prev);
+                      componentStories.forEach(r => next.delete(r.id));
+                      return next;
+                    });
+                    setSelectedFlows(prev => {
+                      const next = new Set(prev);
+                      flowStoriesList.forEach(r => next.delete(r.id));
+                      return next;
+                    });
                   } else {
-                    setSelectedReqs(new Set(componentStories.map(r => r.id)));
-                    // Toggle each flow via handleFlowToggle to auto-link component stories
-                    for (const fs of flowStoriesList) {
-                      if (!selectedFlows.has(fs.id)) handleFlowToggle(fs.id, []);
-                    }
+                    setSelectedReqs(prev => {
+                      const next = new Set(prev);
+                      componentStories.forEach(r => next.add(r.id));
+                      return next;
+                    });
+                    setSelectedFlows(prev => {
+                      const next = new Set(prev);
+                      flowStoriesList.forEach(r => next.add(r.id));
+                      return next;
+                    });
                   }
                 }}
                 className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/20"
@@ -513,11 +712,12 @@ export function TestGenConfigPanel({
             </label>
             <div className="flex items-center gap-1.5">
               <button
-                onClick={() => setExpandAll(!expandAll)}
-                className="text-[11px] font-medium text-slate-400 hover:text-blue-600 px-2 py-1 rounded-md hover:bg-blue-50 transition-colors"
-                title={expandAll ? 'Collapse all' : 'Expand all'}
+                onClick={handleToggleExpandAll}
+                className="flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-blue-600 px-2 py-1 rounded-md hover:bg-blue-50 transition-colors"
+                title={allExpanded ? 'Collapse all' : 'Expand all'}
               >
-                {expandAll ? 'Collapse' : 'Expand'}
+                <ChevronsUpDown size={12} />
+                <span>{allExpanded ? 'Collapse' : 'Expand'}</span>
               </button>
             </div>
           </div>
@@ -525,7 +725,20 @@ export function TestGenConfigPanel({
             {tree.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                 <FileText size={28} className="mb-2 opacity-40" />
-                <p className="text-xs">No requirements found</p>
+                <p className="text-xs">
+                  {isFiltering ? 'No matching requirements found' : 'No requirements found'}
+                </p>
+                {isFiltering && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedDocIdFilter('all');
+                    }}
+                    className="mt-2 text-[11px] text-blue-600 hover:text-blue-700 underline"
+                  >
+                    Clear filters
+                  </button>
+                )}
               </div>
             ) : (
               tree.map(node => (
@@ -536,9 +749,11 @@ export function TestGenConfigPanel({
                   selectedFlowIds={selectedFlows}
                   onToggle={handleReqToggle}
                   onToggleFlow={handleFlowToggle}
-                  forceExpanded={expandAll}
+                  expandedIds={expandedIds}
+                  onToggleExpand={handleToggleExpand}
                   selectedStoryId={selectedStoryId}
                   onSelectStory={setSelectedStoryId}
+                  prdDocMap={prdDocMap}
                 />
               ))
             )}
@@ -576,6 +791,19 @@ export function TestGenConfigPanel({
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                     <span>Level: <span className="font-medium text-slate-700">{selectedStory.level}</span></span>
                     <span>Status: <span className="font-medium text-slate-700">{selectedStory.status}</span></span>
+                    {selectedStory.sourceAnchor && (
+                      <span>Source: <span className="font-mono text-slate-700">{selectedStory.sourceAnchor}</span></span>
+                    )}
+                    {selectedStory.documentId && (
+                      (() => {
+                        const doc = prdDocMap.get(selectedStory.documentId);
+                        return (
+                          <span>
+                            PRD Document: <span className="font-medium text-blue-600">{doc ? `${doc.title} (${doc.currentVersionTag || 'v1.0'})` : selectedStory.documentId}</span>
+                          </span>
+                        );
+                      })()
+                    )}
                   </div>
                   {/* Description */}
                   {selectedStory.description && (

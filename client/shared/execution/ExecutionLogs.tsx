@@ -1,8 +1,6 @@
-import React, { useState, useMemo, useRef, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import { ExecutionLog } from "@/shared/types";
 import { X, ChevronRight, ChevronDown, Info, AlertTriangle, XCircle, CheckCircle, Copy, Check } from "lucide-react";
-// @ts-ignore
-import { FixedSizeList as List } from "react-window";
 
 interface ExecutionLogsProps {
   logs: ExecutionLog[];
@@ -110,8 +108,6 @@ export const ExecutionLogs: React.FC<ExecutionLogsProps> = ({ logs }) => {
   const [enlargedImage, setEnlargedImage] = useState<string | null>(null);
   const [filterLevel, setFilterLevel] = useState<string>('info');
   const [autoScroll, setAutoScroll] = useState(true);
-  const listRef = useRef<List>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
   const filteredLogs = useMemo(() => {
     if (filterLevel === 'all') return logs;
@@ -133,82 +129,6 @@ export const ExecutionLogs: React.FC<ExecutionLogsProps> = ({ logs }) => {
       return logSeverity >= filterSeverity;
     });
   }, [logs, filterLevel]);
-
-  useEffect(() => {
-    if (autoScroll && listRef.current && filteredLogs.length > 0) {
-      listRef.current.scrollToItem(filteredLogs.length - 1, "end");
-    }
-  }, [filteredLogs.length, autoScroll]);
-
-  const handleScroll = ({ scrollOffset, scrollUpdateWasRequested }: any) => {
-    if (!scrollUpdateWasRequested && containerRef.current) {
-      // If user scrolled up, disable auto-scroll
-      // We need to estimate max scroll. This is a bit tricky with react-window without knowing exact heights if variable.
-      // Assuming fixed size for simplicity, but we might need VariableSizeList if items vary a lot.
-      // For now, we'll just keep it simple.
-    }
-  };
-
-  const Row = ({ index, style }: { index: number, style: React.CSSProperties }) => {
-    const log = filteredLogs[index];
-    
-    // We adjust style slightly to allow padding
-    const rowStyle = {
-      ...style,
-      top: `${parseFloat(style.top as string) + 4}px`,
-      height: `${parseFloat(style.height as string) - 8}px`,
-    };
-
-    return (
-      <div style={rowStyle} className="flex flex-col px-4">
-        <div className={`flex gap-3 text-xs leading-relaxed items-start ${LogLevelColor(log.level, log.status)}`}>
-          <span className="text-slate-600 shrink-0 select-none w-16 pt-0.5">
-            [{new Date(log.timestamp).toLocaleTimeString().split(" ")[0]}]
-          </span>
-          <LogLevelIcon level={log.level} />
-          <div className="flex-1 min-w-0 break-words">
-            <span className={
-              log.message.includes("🚀") || log.message.includes("🎬") ? "text-blue-400 font-bold" :
-              log.message.includes("✅") || log.message.includes("Completed Successfully") ? "text-emerald-400" :
-              log.message.includes("📦") ? "text-purple-400" :
-              log.message.includes("🌐") ? "text-cyan-400" :
-              log.message.includes("📊") ? "text-yellow-400" : ""
-            }>
-              {log.message}
-            </span>
-            
-            {log.metadata && Object.keys(log.metadata).length > 0 && (
-              <JsonViewer data={log.metadata} />
-            )}
-
-            {log.screenshot && (
-              <div className="mt-2">
-                <img
-                  src={log.screenshot}
-                  alt="Step screenshot"
-                  className="rounded border border-slate-700 shadow-lg object-contain max-h-32 bg-slate-800 cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => setEnlargedImage(log.screenshot || null)}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // Estimate row height based on content. This is a simplification.
-  // A real implementation might use VariableSizeList.
-  const getItemSize = (index: number) => {
-    const log = filteredLogs[index];
-    let height = 32; // Base height
-    if (log.metadata && Object.keys(log.metadata).length > 0) height += 28; // Collapsed metadata height
-    if (log.screenshot) height += 140; // Screenshot height
-    // Note: Expanded metadata will break fixed height. 
-    // For a robust solution, we should use VariableSizeList and measure, or just use standard rendering with CSS virtualization if possible.
-    // Given the constraints, let's revert to standard rendering but optimized, or use a larger estimated height.
-    return height;
-  };
 
   return (
     <div className="flex flex-col h-full bg-slate-950 rounded-md border border-slate-800 overflow-hidden">
@@ -245,7 +165,6 @@ export const ExecutionLogs: React.FC<ExecutionLogsProps> = ({ logs }) => {
       {/* Logs Container - Standard rendering for now to support dynamic heights easily, 
           can upgrade to VariableSizeList if performance becomes an issue with 10k+ logs */}
       <div 
-        ref={containerRef}
         className="flex-1 overflow-y-auto p-4 space-y-3"
         onScroll={(e) => {
           const target = e.target as HTMLDivElement;

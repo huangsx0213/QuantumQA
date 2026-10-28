@@ -2,69 +2,292 @@
   "users": [
     {
       "id": 1,
-      "name": "Jay Huang",
-      "email": "Jay@163.com",
-      "role": "editor",
+      "name": "Alice Smith",
+      "email": "alice@example.com",
+      "role": "admin",
       "status": "active",
-      "bio": "Jay Huang summary",
-      "accessLevel": 3,
-      "dateStart": "",
-      "dateEnd": "",
-      "shiftTime": "",
+      "departmentPath": [
+        "development",
+        "frontend",
+        "react"
+      ],
       "permissions": [
         "view_reports",
         "manage_users"
       ],
-      "twoFactorAuth": false,
-      "departmentPath": [
-        "development",
-        "frontend",
-        "vue"
-      ],
-      "createdAt": "2026-04-30T00:39:03.082Z",
-      "updatedAt": "2026-04-30T01:45:30.634Z",
-      "lastPasswordResetSentAt": "2026-04-30T00:40:14.571Z"
+      "createdAt": "2026-10-26T23:23:01.195Z",
+      "updatedAt": "2026-10-26T23:23:01.195Z"
     },
     {
       "id": 2,
-      "name": "Vick Huang",
-      "email": "huangsx0213@gmail.com",
+      "name": "Bob Jones",
+      "email": "bob@example.com",
+      "role": "editor",
+      "status": "inactive",
+      "departmentPath": [
+        "design",
+        "ui"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-26T23:23:01.195Z",
+      "updatedAt": "2026-10-26T23:23:01.195Z"
+    },
+    {
+      "id": 3,
+      "name": "Charlie Brown",
+      "email": "charlie@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "development",
+        "backend",
+        "node"
+      ],
+      "permissions": [],
+      "createdAt": "2026-10-26T23:23:01.195Z",
+      "updatedAt": "2026-10-26T23:23:01.195Z"
+    },
+    {
+      "id": 4,
+      "name": "User 4",
+      "email": "user4@example.com",
+      "role": "editor",
+      "status": "inactive",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-18T10:37:59.483Z",
+      "updatedAt": "2026-10-24T23:44:26.299Z"
+    },
+    {
+      "id": 5,
+      "name": "User 5",
+      "email": "user5@example.com",
       "role": "admin",
       "status": "active",
-      "bio": "I‘m Vick. VVV’s vick!",
-      "accessLevel": 3,
-      "dateStart": "2026-04-30",
-      "dateEnd": "2026-05-10",
-      "shiftTime": "08:43",
-      "permissions": [
-        "manage_users",
-        "api_access"
-      ],
-      "twoFactorAuth": true,
       "departmentPath": [
         "design",
         "ux"
       ],
-      "createdAt": "2026-04-30T00:43:14.298Z",
-      "updatedAt": "2026-04-30T01:48:49.988Z",
-      "lastPasswordResetSentAt": "2026-04-30T00:44:20.033Z"
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-26T08:43:37.866Z",
+      "updatedAt": "2026-10-24T18:49:30.014Z"
     },
     {
-      "id": 3,
-      "name": "June",
-      "email": "June@qq.com",
+      "id": 6,
+      "name": "User 6",
+      "email": "user6@example.com",
+      "role": "editor",
+      "status": "active",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-18T15:33:21.801Z",
+      "updatedAt": "2026-10-26T20:40:35.008Z"
+    },
+    {
+      "id": 7,
+      "name": "User 7",
+      "email": "user7@example.com",
+      "role": "editor",
+      "status": "inactive",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-18T02:41:53.238Z",
+      "updatedAt": "2026-10-26T23:19:10.028Z"
+    },
+    {
+      "id": 8,
+      "name": "User 8",
+      "email": "user8@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-17T11:00:24.697Z",
+      "updatedAt": "2026-10-25T07:14:36.001Z"
+    },
+    {
+      "id": 9,
+      "name": "User 9",
+      "email": "user9@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-17T00:26:01.893Z",
+      "updatedAt": "2026-10-23T21:38:58.507Z"
+    },
+    {
+      "id": 10,
+      "name": "User 10",
+      "email": "user10@example.com",
+      "role": "editor",
+      "status": "inactive",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-26T00:13:30.034Z",
+      "updatedAt": "2026-10-26T17:11:46.792Z"
+    },
+    {
+      "id": 11,
+      "name": "User 11",
+      "email": "user11@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-25T19:27:41.997Z",
+      "updatedAt": "2026-10-26T16:40:08.880Z"
+    },
+    {
+      "id": 12,
+      "name": "User 12",
+      "email": "user12@example.com",
+      "role": "editor",
+      "status": "active",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-22T00:19:46.846Z",
+      "updatedAt": "2026-10-21T04:53:30.273Z"
+    },
+    {
+      "id": 13,
+      "name": "User 13",
+      "email": "user13@example.com",
+      "role": "editor",
+      "status": "inactive",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-25T21:19:05.886Z",
+      "updatedAt": "2026-10-22T09:46:54.142Z"
+    },
+    {
+      "id": 14,
+      "name": "User 14",
+      "email": "user14@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-17T07:50:55.166Z",
+      "updatedAt": "2026-10-23T19:39:39.330Z"
+    },
+    {
+      "id": 15,
+      "name": "User 15",
+      "email": "user15@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-26T16:41:57.190Z",
+      "updatedAt": "2026-10-23T05:23:30.657Z"
+    },
+    {
+      "id": 16,
+      "name": "User 16",
+      "email": "user16@example.com",
+      "role": "viewer",
+      "status": "inactive",
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-22T17:00:04.828Z",
+      "updatedAt": "2026-10-24T00:52:24.470Z"
+    },
+    {
+      "id": 17,
+      "name": "User 17",
+      "email": "user17@example.com",
+      "role": "viewer",
+      "status": "active",
+      "departmentPath": [
+        "design",
+        "ux"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-24T06:20:52.650Z",
+      "updatedAt": "2026-10-25T12:47:14.359Z"
+    },
+    {
+      "id": 18,
+      "name": "User 18",
+      "email": "user18@example.com",
       "role": "admin",
       "status": "active",
-      "bio": "",
-      "accessLevel": 3,
-      "dateStart": "",
-      "dateEnd": "",
-      "shiftTime": "",
-      "permissions": [],
-      "twoFactorAuth": false,
-      "departmentPath": [],
-      "createdAt": "2026-05-04T01:05:46.295Z",
-      "updatedAt": "2026-05-04T01:05:46.295Z"
+      "departmentPath": [
+        "development",
+        "frontend"
+      ],
+      "permissions": [
+        "view_reports"
+      ],
+      "createdAt": "2026-10-15T14:49:50.966Z",
+      "updatedAt": "2026-10-25T19:02:26.433Z"
     }
   ]
 }

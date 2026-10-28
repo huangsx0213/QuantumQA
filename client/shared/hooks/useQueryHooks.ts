@@ -9,7 +9,7 @@ export { useEnvironments, useEnvironmentMutations } from './useEnvironmentHooks'
 export { useReports, useReportMutations } from './useReportHooks';
 export { useDynamicVariables, useDynamicVariableMutations } from './useDynamicVariableHooks';
 export { useAgents, useQueue, useAgentMutations } from './useAgentHooks';
-export { useRequirements, useRequirementMutations } from './useRequirementHooks';
+export { useRequirements, useRequirementMutations, usePrdDocuments, usePrdDocumentVersions, usePrdDocumentDiff, usePrdDocumentMutations } from './useRequirementHooks';
 export { useProviderConfigs, useProviderConfigMutations } from './useProviderConfigHooks';
 export { useTestGenRuns, useCheckpoint, useAgentLogs } from './useTestGenHooks';
 export { useNlCases } from './useNlCaseHooks';

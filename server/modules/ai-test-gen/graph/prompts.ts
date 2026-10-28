@@ -456,7 +456,7 @@ function serializeFlowForQuality(f: any) {
 export function buildAnalystUserMessage(state: TestGenState): string {
   // The analystInput object is pre-built in buildBatchInputState (orchestrator.ts)
   // so we just serialize it here. Falls back to legacy assembly if not available.
-  const input = state.analystInput
+  const input: Record<string, unknown> = state.analystInput
     ? { ...state.analystInput }
     : { epic: state.epic, stories: [] };
   if (state.humanReviewFeedback) {

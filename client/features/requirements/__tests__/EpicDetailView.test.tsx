@@ -12,6 +12,11 @@ vi.mock("../../../shared/hooks/useQueryHooks", () => ({
     remove: vi.fn().mockResolvedValue(undefined),
   }),
   useRequirements: () => ({ data: [] }),
+  usePrdDocuments: () => ({
+    data: [
+      { id: "doc-1", title: "Core System PRD", currentVersionTag: "v1.0" },
+    ],
+  }),
 }));
 
 function makeEpic(overrides: Partial<Requirement> & { id: string }): Requirement {
@@ -57,7 +62,23 @@ describe("EpicDetailView", () => {
     expect(screen.getByDisplayValue("Account Security")).toBeInTheDocument();
   });
 
-  it("does not render AC list section", () => {
+  it("renders stories dashboard and add story button", () => {
+    const onCreateStory = vi.fn();
+    render(
+      React.createElement(Wrapper, null,
+        React.createElement(EpicDetailView, {
+          epic: makeEpic({ id: "epic-1" }),
+          projectId: "p1",
+          onSaved: vi.fn(),
+          onCreateStory,
+        })
+      )
+    );
+    expect(screen.getByText("Stories in this Epic")).toBeInTheDocument();
+    expect(screen.getByText("Add Story")).toBeInTheDocument();
+  });
+
+  it("does not render direct AC editor", () => {
     render(
       React.createElement(Wrapper, null,
         React.createElement(EpicDetailView, {
@@ -67,7 +88,7 @@ describe("EpicDetailView", () => {
         })
       )
     );
-    expect(screen.queryByText(/Acceptance Criteria/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Given \/ When \/ Then segments/i)).not.toBeInTheDocument();
   });
 
   it("does not render dependency editor", () => {
@@ -81,5 +102,25 @@ describe("EpicDetailView", () => {
       )
     );
     expect(screen.queryByText(/^Dependencies$/i)).not.toBeInTheDocument();
+  });
+
+  it("renders PRD provenance pill when epic is linked to a document", () => {
+    render(
+      React.createElement(
+        Wrapper,
+        null,
+        React.createElement(EpicDetailView, {
+          epic: makeEpic({
+            id: "epic-prd",
+            title: "Auth Module",
+            documentId: "doc-1",
+            sourceAnchor: "Chapter 2 - Auth",
+          }),
+          projectId: "p1",
+          onSaved: vi.fn(),
+        })
+      )
+    );
+    expect(screen.getByText(/PRD: Core System PRD \(v1\.0\) · Chapter 2 - Auth/)).toBeInTheDocument();
   });
 });

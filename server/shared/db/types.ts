@@ -199,6 +199,32 @@ export type DbRequirementRow = {
   flow_type: string | null;
   is_flow: number;
   related_requirement_ids: string;
+  document_id: string | null;
+  document_version_id: string | null;
+  source_anchor: string | null;
+};
+
+export type DbPrdDocumentRow = {
+  id: string;
+  project_id: string;
+  title: string;
+  file_type: string;
+  current_version_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DbPrdDocumentVersionRow = {
+  id: string;
+  document_id: string;
+  version_number: number;
+  version_tag: string;
+  file_name: string;
+  file_size: number;
+  storage_path: string;
+  parsed_summary: string;
+  item_count: number;
+  created_at: string;
 };
 
 

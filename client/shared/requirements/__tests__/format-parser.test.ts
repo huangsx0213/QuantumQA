@@ -12,6 +12,24 @@ describe('frontend parseStoryMarkdown mirror', () => {
     const result = parseStoryMarkdown('As a: user\nI want: x\nSo that: y');
     expect(result.action).toBe('x');
   });
+
+  it('parses standard single-sentence user story', () => {
+    const result = parseStoryMarkdown('As a first-time user, I want to see a clear sign-in form so that I can identify how to authenticate.');
+    expect(result.hasAllSegments).toBe(true);
+    expect(result.role).toBe('first-time user');
+    expect(result.action).toBe('see a clear sign-in form');
+    expect(result.value).toBe('identify how to authenticate');
+    expect(result.remainder).toBe('');
+  });
+
+  it('parses single-sentence story with additional context remainder', () => {
+    const result = parseStoryMarkdown('As a registered administrator, I want to sign in with valid credentials so that I can access the protected application. Default credentials are admin / admin123, and successful login returns token "fake-jwt-token-12345".');
+    expect(result.hasAllSegments).toBe(true);
+    expect(result.role).toBe('registered administrator');
+    expect(result.action).toBe('sign in with valid credentials');
+    expect(result.value).toBe('access the protected application');
+    expect(result.remainder).toBe('Default credentials are admin / admin123, and successful login returns token "fake-jwt-token-12345".');
+  });
 });
 
 describe('frontend parseACMarkdown mirror', () => {

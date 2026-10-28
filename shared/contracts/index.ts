@@ -460,6 +460,89 @@ export interface Requirement {
   isFlow?: boolean;
   // AC-level only: functional requirements this scenario involves
   relatedRequirementIds?: string[];
+  // PRD document traceability
+  documentId?: string | null;
+  documentVersionId?: string | null;
+  sourceAnchor?: string | null;
+  versionIds?: string[];
+}
+
+export interface PrdDocument {
+  id: string;
+  projectId: string;
+  title: string;
+  fileType: 'docx' | 'xlsx' | 'markdown' | 'csv';
+  currentVersionId?: string | null;
+  currentVersionTag?: string;
+  itemCount?: number;
+  createdAt: string;
+  updatedAt: string;
+  versions?: PrdDocumentVersion[];
+}
+
+export interface PrdDocumentVersion {
+  id: string;
+  documentId: string;
+  versionNumber: number;
+  versionTag: string;
+  fileName: string;
+  fileSize: number;
+  storagePath: string;
+  parsedSummary?: string;
+  itemCount: number;
+  createdAt: string;
+}
+
+export interface PrdParsedPreviewItem {
+  id: string;
+  title: string;
+  description: string;
+  level: 'epic' | 'story' | 'ac';
+  parentId?: string | null;
+  flowType?: 'atomic' | 'flow' | null;
+  isFlow?: boolean;
+  sourceAnchor?: string;
+  diffStatus?: 'added' | 'modified' | 'deprecated' | 'unchanged';
+  previousTitle?: string;
+  previousDescription?: string;
+}
+
+export interface PrdParsePreviewResult {
+  fileName: string;
+  fileSize: number;
+  fileType: 'docx' | 'xlsx' | 'markdown' | 'csv';
+  documentTitle: string;
+  versionTag: string;
+  items: PrdParsedPreviewItem[];
+  warnings?: string[];
+  stats: {
+    total: number;
+    epics: number;
+    stories: number;
+    acs: number;
+    added: number;
+    modified: number;
+    deprecated: number;
+    unchanged: number;
+  };
+}
+
+export interface PrdVersionDiffResult {
+  documentId: string;
+  documentTitle: string;
+  baseVersion: PrdDocumentVersion;
+  targetVersion: PrdDocumentVersion;
+  stats: {
+    total: number;
+    epics: number;
+    stories: number;
+    acs: number;
+    added: number;
+    modified: number;
+    deprecated: number;
+    unchanged: number;
+  };
+  items: PrdParsedPreviewItem[];
 }
 
 export interface PipelineBusinessFlowBlueprintStep {

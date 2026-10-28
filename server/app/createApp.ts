@@ -17,13 +17,18 @@ export function createApp() {
   );
 
   app.use(cors());
-  const parseJson = express.json();
+  const parseStandardJson = express.json({ limit: '2mb' });
+  const parsePrdJson = express.json({ limit: '50mb' });
   app.use((req, res, next) => {
     if (isHtmlKnowledgePageUpload(req)) {
       next();
       return;
     }
-    parseJson(req, res, next);
+    if (isPrdDocumentUpload(req)) {
+      parsePrdJson(req, res, next);
+      return;
+    }
+    parseStandardJson(req, res, next);
   });
 
   runMigrations();
@@ -46,6 +51,13 @@ const HTML_KNOWLEDGE_PAGE_UPLOAD_PATH =
 
 function isHtmlKnowledgePageUpload(req: Request): boolean {
   return req.method === 'PUT' && HTML_KNOWLEDGE_PAGE_UPLOAD_PATH.test(req.path);
+}
+
+const PRD_DOCUMENT_UPLOAD_PATH =
+  /^\/api\/requirements\/[^/]+\/documents\/(?:parse-preview|commit)\/?$/iu;
+
+function isPrdDocumentUpload(req: Request): boolean {
+  return req.method === 'POST' && PRD_DOCUMENT_UPLOAD_PATH.test(req.path);
 }
 
 export function resolveTrustProxySetting(

@@ -10,6 +10,8 @@ export const queryKeys = {
   dynamicVariables: (projectId: string) => ['dynamic-variables', projectId] as const,
   agents: ['agents'] as const,
   requirements: ['requirements'] as const,
+  prdDocuments: (projectId: string) => ['prd-documents', projectId] as const,
+  prdDocumentDiff: (projectId: string, docId: string, baseId?: string, targetId?: string) => ['prd-diff', projectId, docId, baseId, targetId] as const,
   queue: ['queue'] as const,
   testGen: {
     runs: (projectId: string) => ['test-gen', 'runs', projectId] as const,

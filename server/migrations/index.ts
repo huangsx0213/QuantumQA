@@ -1,4 +1,4 @@
-import { Log } from '../shared/services/logger';
+import { Log } from '../shared/services/logger.ts';
 import { db } from '../shared/db/client.ts';
 import { migration000InitialSchema } from './000_initial_schema.ts';
 import { migration001AddTestLevelToNlCases } from './001_add_test_level_to_nl_cases.ts';
@@ -13,6 +13,8 @@ import { migration009DropHumanIdDependenciesType } from './009_drop_human_id_dep
 import { migration010AddTestGenHtmlKnowledge } from './010_add_test_gen_html_knowledge.ts';
 import { migration011AddRecorderExecutionMode } from './011_add_recorder_execution_mode.ts';
 import { migration012AddStepLogDetails } from './012_add_step_log_details.ts';
+import { migration013AddPrdDocumentsAndVersioning } from './013_add_prd_documents_and_versioning.ts';
+import { migration014AddPrdDocumentVersionItems } from './014_add_prd_document_version_items.ts';
 import { seedDefaults } from '../seed.ts';
 import type { Migration } from './types.ts';
 
@@ -30,6 +32,8 @@ export const migrations: Migration[] = [
   migration010AddTestGenHtmlKnowledge,
   migration011AddRecorderExecutionMode,
   migration012AddStepLogDetails,
+  migration013AddPrdDocumentsAndVersioning,
+  migration014AddPrdDocumentVersionItems,
 ];
 
 function appliedMigrationIds(): Set<string> {

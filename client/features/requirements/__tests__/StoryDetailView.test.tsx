@@ -14,6 +14,7 @@ vi.mock("../../../shared/hooks/useQueryHooks", () => ({
     remove: vi.fn().mockResolvedValue(undefined),
   }),
   useRequirements: () => ({ data: [] }),
+  usePrdDocuments: () => ({ data: [] }),
 }));
 
 function makeStory(overrides: Partial<Requirement> & { id: string }): Requirement {
@@ -124,5 +125,26 @@ describe("StoryDetailView", () => {
     expect(screen.getByText(/As a/)).toBeInTheDocument();
     expect(screen.getByText(/I want/)).toBeInTheDocument();
     expect(screen.getByText(/So that/)).toBeInTheDocument();
+  });
+
+  it("renders single-sentence continuous user story without warning", () => {
+    const story = makeStory({
+      id: "story-1",
+      description: "As a first-time user, I want to see a clear sign-in form so that I can identify how to authenticate.",
+    });
+    render(
+      React.createElement(Wrapper, null,
+        React.createElement(StoryDetailView, {
+          story,
+          acs: [],
+          projectId: "p1",
+          onSaved: vi.fn(),
+        })
+      )
+    );
+    expect(screen.getByText("first-time user")).toBeInTheDocument();
+    expect(screen.getByText("see a clear sign-in form")).toBeInTheDocument();
+    expect(screen.getByText("identify how to authenticate")).toBeInTheDocument();
+    expect(screen.queryByText(/segments not detected/i)).not.toBeInTheDocument();
   });
 });

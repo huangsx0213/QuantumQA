@@ -9,9 +9,14 @@ vi.mock('@/shared/services/api', () => ({
     requirements: {
       list: vi.fn(),
       listByProject: vi.fn(),
+      listPrdDocuments: vi.fn().mockResolvedValue([]),
+      getPrdDocumentVersions: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+    },
+    providerConfigs: {
+      list: vi.fn().mockResolvedValue([]),
     },
   },
 }));
@@ -34,6 +39,7 @@ function renderPage(props: { currentProjectId?: string } = {}) {
 describe('RequirementsPage', () => {
   beforeEach(() => {
     vi.mocked(api.requirements.listByProject).mockReset();
+    vi.mocked(api.requirements.listPrdDocuments).mockResolvedValue([]);
   });
 
   it('shows loading state', () => {
@@ -45,7 +51,7 @@ describe('RequirementsPage', () => {
   it('shows empty state when no requirements', async () => {
     vi.mocked(api.requirements.listByProject).mockResolvedValue([]);
     renderPage({ currentProjectId: 'proj-1' });
-    expect(await screen.findByText('No requirements found')).toBeInTheDocument();
+    expect(await screen.findByText('No requirements yet')).toBeInTheDocument();
   });
 
   it('shows empty state when nothing selected but project set', async () => {
@@ -54,7 +60,7 @@ describe('RequirementsPage', () => {
     ] as any);
     renderPage({ currentProjectId: 'proj-1' });
     await screen.findByText('Req');
-    expect(screen.getByText('Select a story or epic to view details')).toBeInTheDocument();
+    expect(screen.getByText('Select a Requirement')).toBeInTheDocument();
   });
 
   it('renders requirements in the tree', async () => {
@@ -72,7 +78,7 @@ describe('RequirementsPage', () => {
       { id: 'r1', projectId: 'proj-1', title: 'One', description: '', level: 'story', status: 'DRAFT', position: 0, parentId: null },
     ] as any);
     renderPage({ currentProjectId: 'proj-1' });
-    expect(await screen.findByText('1 stories · 0 epics')).toBeInTheDocument();
+    expect(await screen.findByText('1 stories · 0 epics · 0 ACs')).toBeInTheDocument();
   });
 
   it('shows editor form when requirement selected', async () => {
@@ -90,9 +96,9 @@ describe('RequirementsPage', () => {
     ] as any);
     renderPage({ currentProjectId: 'proj-1' });
     await screen.findByText('Req');
-    const importBtns = screen.getAllByTitle('Import Requirements');
+    const importBtns = screen.getAllByTitle(/Import PRD Document/i);
     fireEvent.click(importBtns[importBtns.length - 1]);
-    expect(await screen.findByText('Import Requirements')).toBeInTheDocument();
+    expect(await screen.findByText(/Import PRD Document/i)).toBeInTheDocument();
   });
 
   it('does not render add child button on tree rows (moved to right panel)', async () => {
@@ -121,10 +127,10 @@ describe('RequirementsPage', () => {
       ] as any);
       renderPage({ currentProjectId: 'proj-1' });
       fireEvent.click(await screen.findByText('Auth Epic'));
-      // EpicDetailView should NOT render the "Acceptance Criteria" section (that's Story-only)
-      // But it should render a "Save" button (both views have it)
+      // EpicDetailView renders Stories in this Epic and Save button
       expect(await screen.findByRole('button', { name: /Save/i })).toBeInTheDocument();
-      expect(screen.queryByText(/Acceptance Criteria/i)).not.toBeInTheDocument();
+      expect(screen.getByText('Stories in this Epic')).toBeInTheDocument();
+      expect(screen.queryByText(/Standard User Story Format/i)).not.toBeInTheDocument();
     });
 
     it('renders empty state when nothing selected', async () => {
@@ -133,7 +139,7 @@ describe('RequirementsPage', () => {
       ] as any);
       renderPage({ currentProjectId: 'proj-1' });
       await screen.findByText('Some Req');
-      expect(screen.getByText('Select a story or epic to view details')).toBeInTheDocument();
+      expect(screen.getByText('Select a Requirement')).toBeInTheDocument();
     });
   });
 });

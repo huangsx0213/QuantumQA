@@ -182,15 +182,18 @@ export function ACCard({ ac, index, projectId, onSaved, parentStoryIsFlow = fals
     }
   };
 
-  const cycleStatus = async () => {
-    const idx = statusOrder.indexOf(status);
-    const next = statusOrder[(idx + 1) % statusOrder.length];
+  const handleStatusChange = async (next: "DRAFT" | "APPROVED" | "DEPRECATED") => {
+    if (next === status) return;
+    if (next === "DEPRECATED" && !window.confirm(`Mark ${ac.id} as DEPRECATED?`)) {
+      return;
+    }
+    const prev = status;
     setStatus(next);
     try {
       await update(ac.id, { status: next });
       onSaved({ ...ac, status: next });
     } catch {
-      setStatus(status);
+      setStatus(prev);
     }
   };
 
@@ -226,13 +229,22 @@ export function ACCard({ ac, index, projectId, onSaved, parentStoryIsFlow = fals
           <span className="text-slate-300">·</span>
           <span>#{index}</span>
         </span>
-        <button
-          onClick={cycleStatus}
-          className={`text-[10.5px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider transition-opacity hover:opacity-80 ${statusChipClass(status)}`}
-          title="Click to cycle status"
+        <select
+          value={status}
+          onChange={(e) => handleStatusChange(e.target.value as "DRAFT" | "APPROVED" | "DEPRECATED")}
+          className={`text-[10.5px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider bg-white cursor-pointer outline-none focus:ring-1 focus:ring-blue-500 ${statusChipClass(status)}`}
+          title="Change AC status"
+          aria-label="Acceptance criteria status"
         >
-          {status}
-        </button>
+          <option value="DRAFT">DRAFT</option>
+          <option value="APPROVED">APPROVED</option>
+          <option value="DEPRECATED">DEPRECATED</option>
+        </select>
+        {ac.sourceAnchor && (
+          <span className="text-[10px] font-mono text-slate-400 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded" title={`PRD Source: ${ac.sourceAnchor}`}>
+            {ac.sourceAnchor}
+          </span>
+        )}
 
         {parentStoryIsFlow ? (
           <>

@@ -27,6 +27,34 @@ describe('parseMarkdownRequirements', () => {
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.warnings[0]).toContain('has no parent');
   });
+
+  it('parses bullet acceptance criteria under a story', () => {
+    const md = `# Auth Module
+## User Login
+As a registered user, I want to log in.
+
+- AC 1: Given valid credentials, When clicking login, Then dashboard opens
+- AC 2: Given wrong password, When clicking login, Then show error
+- Given user token is expired, When making API call, Then return 401`;
+    const result = parseMarkdownRequirements(md, 'proj-1');
+    expect(result.imported).toBe(5); // 1 epic + 1 story + 3 ACs
+    const acs = result.requirements.filter(r => r.level === 'ac');
+    expect(acs.length).toBe(3);
+    const story = result.requirements.find(r => r.level === 'story');
+    expect(acs.every(ac => ac.parentId === story?.id)).toBe(true);
+  });
+
+  it('parses bullets under an Acceptance Criteria section header', () => {
+    const md = `# Checkout
+## Payment
+### Acceptance Criteria
+- Credit card must be validated with Luhn algorithm
+- CVV must be 3 or 4 digits`;
+    const result = parseMarkdownRequirements(md, 'proj-1');
+    const acs = result.requirements.filter(r => r.level === 'ac');
+    expect(acs.length).toBe(2);
+    expect(acs[0].title).toContain('Luhn');
+  });
 });
 
 describe('parseCsvRequirements', () => {

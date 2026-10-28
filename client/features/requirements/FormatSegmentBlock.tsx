@@ -58,7 +58,7 @@ export function FormatSegmentBlock({ segments, remainder, variant = "story" }: P
       ))}
 
       {hasRemainder && (
-        <div className="pt-2 mt-2 border-t border-slate-200 [&_p]:mb-1.5 [&_p:last-child]:mb-0">
+        <div className={`${visible.length > 0 ? "pt-2.5 mt-2.5 border-t border-slate-200" : ""} text-slate-600 [&_p]:mb-1.5 [&_p:last-child]:mb-0`}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{remainder!}</ReactMarkdown>
         </div>
       )}

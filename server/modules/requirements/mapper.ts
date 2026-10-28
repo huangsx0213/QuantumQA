@@ -20,5 +20,8 @@ export function normalizeRequirement(input: Partial<Requirement>): Requirement {
         ? input.relatedRequirementIds.filter((value): value is string => typeof value === 'string')
         : [])
       : [],
+    documentId: nullableText(input.documentId) || undefined,
+    documentVersionId: nullableText(input.documentVersionId) || undefined,
+    sourceAnchor: nullableText(input.sourceAnchor) || undefined,
   };
 }

@@ -11,10 +11,15 @@ export const autRouter = Router();
 
 const DB_FILE = path.join(_dirname, 'db.json');
 
-// Initialize DB if not exists
-if (!fs.existsSync(DB_FILE)) {
+const getDb = () => JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+const saveDb = (data: any) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+
+// Seed data: 3 fixed users plus 15 generated ones. Generated roles are
+// randomized on purpose so suites must derive role counts from the API at
+// runtime, while statuses stay deterministic (inactive for IDs 4, 7, 10, 13, 16).
+function buildSeedUsers(): any[] {
   const now = new Date().toISOString();
-  const initialUsers = [
+  return [
     { id: 1, name: 'Alice Smith', email: 'alice@example.com', role: 'admin', status: 'active', departmentPath: ['development', 'frontend', 'react'], permissions: ['view_reports', 'manage_users'], createdAt: now, updatedAt: now },
     { id: 2, name: 'Bob Jones', email: 'bob@example.com', role: 'editor', status: 'inactive', departmentPath: ['design', 'ui'], permissions: ['view_reports'], createdAt: now, updatedAt: now },
     { id: 3, name: 'Charlie Brown', email: 'charlie@example.com', role: 'viewer', status: 'active', departmentPath: ['development', 'backend', 'node'], permissions: [], createdAt: now, updatedAt: now },
@@ -30,11 +35,12 @@ if (!fs.existsSync(DB_FILE)) {
       updatedAt: new Date(Date.now() - Math.random() * 500000000).toISOString()
     }))
   ];
-  fs.writeFileSync(DB_FILE, JSON.stringify({ users: initialUsers }, null, 2));
 }
 
-const getDb = () => JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
-const saveDb = (data: any) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+// Initialize DB if not exists
+if (!fs.existsSync(DB_FILE)) {
+  saveDb({ users: buildSeedUsers() });
+}
 
 // Auth Flow
 autRouter.post('/auth/login', (req, res) => {
@@ -221,6 +227,20 @@ autRouter.post('/users/batch-delete', (req, res) => {
   db.users = db.users.filter((u: any) => !ids.includes(u.id));
   saveDb(db);
   res.json({ success: true });
+});
+
+// Test Data Reset
+// Rewrites db.json with a fresh seed so suites can start from a known state
+// without deleting the file and restarting the server. Unauthenticated like
+// the fault endpoints — it is demo test infrastructure.
+autRouter.post('/test/reset', (req, res) => {
+  const seed = buildSeedUsers();
+  saveDb({ users: seed });
+  res.json({
+    success: true,
+    message: 'Database reset to seed state',
+    data: { userCount: seed.length }
+  });
 });
 
 // Fault Injection

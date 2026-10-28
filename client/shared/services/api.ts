@@ -1,5 +1,5 @@
 import { Project, TestSuite, HeaderProfile, BodyTemplate, ApiEndpoint, ExecutionReport, Settings, ExecutionRequest, DynamicVariable } from '@/shared/types';
-import type { Requirement } from '../../../shared/contracts/index';
+import type { Requirement, PrdDocument, PrdDocumentVersion, PrdParsePreviewResult, PrdVersionDiffResult } from '../../../shared/contracts/index';
 import type { StartConfig } from '@/shared/test-gen-run/types';
 
 export type HtmlKnowledgeSetStatus = 'UPLOADING' | 'READY' | 'BOUND';
@@ -164,6 +164,60 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify({ newId }),
       }),
+    listPrdDocuments: (projectId: string) =>
+      apiFetch<PrdDocument[]>(`requirements/${projectId}/documents`),
+    getPrdDocumentVersions: (projectId: string, docId: string) =>
+      apiFetch<PrdDocumentVersion[]>(`requirements/${projectId}/documents/${docId}/versions`),
+    getPrdDocumentDiff: (
+      projectId: string,
+      docId: string,
+      baseVersionId?: string,
+      targetVersionId?: string
+    ) => {
+      const params = new URLSearchParams();
+      if (baseVersionId) params.set('baseVersionId', baseVersionId);
+      if (targetVersionId) params.set('targetVersionId', targetVersionId);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      return apiFetch<PrdVersionDiffResult>(`requirements/${projectId}/documents/${docId}/diff${query}`);
+    },
+    parsePreviewPrd: (projectId: string, payload: {
+      fileName: string;
+      fileBase64: string;
+      documentId?: string;
+      documentTitle?: string;
+      providerConfigId?: string;
+      model?: string;
+    }) =>
+      apiFetch<PrdParsePreviewResult>(`requirements/${projectId}/documents/parse-preview`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    commitPrd: (projectId: string, payload: {
+      fileName: string;
+      fileBase64: string;
+      documentId?: string;
+      documentTitle?: string;
+      versionTag?: string;
+      items: any[];
+    }) =>
+      apiFetch<{ documentId: string; versionId: string; importedCount: number }>(`requirements/${projectId}/documents/commit`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    deletePrdDocument: (projectId: string, docId: string, deleteRequirements?: boolean) =>
+      apiFetch<{ deletedRequirementsCount: number }>(
+        `requirements/${projectId}/documents/${docId}${deleteRequirements ? '?deleteRequirements=true' : ''}`,
+        {
+          method: 'DELETE',
+        }
+      ),
+    deletePrdDocumentVersion: (projectId: string, docId: string, versionId: string, deleteRequirements = true) =>
+      apiFetch<{ deletedRequirementsCount: number }>(
+        `requirements/${projectId}/documents/${docId}/versions/${versionId}?deleteRequirements=${deleteRequirements}`,
+        {
+          method: 'DELETE',
+        }
+      ),
   },
   testGen: {
     runs: (projectId: string) => apiFetch<any[]>(`test-gen/runs/${projectId}`),

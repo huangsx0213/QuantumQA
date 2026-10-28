@@ -1,6 +1,5 @@
 import type { Requirement } from '../../shared/contracts/index.ts';
 import { normalizeRequirement } from './mapper.ts';
-import { requirementRepo } from './repository.ts';
 import { randomId } from '../../shared/utils/index.ts';
 
 interface ImportResult {
@@ -19,10 +18,11 @@ const headingToLevel: Record<number, Requirement['level']> = {
 export function parseMarkdownRequirements(markdown: string, projectId: string): ImportResult {
   const lines = markdown.split('\n');
   const requirements: Requirement[] = [];
-  const levelStack: { level: number; id: string }[] = [];
+  const levelStack: { level: number; id: string; levelName: Requirement['level'] }[] = [];
   const warnings: string[] = [];
   let currentReq: Partial<Requirement> | null = null;
   let descriptionLines: string[] = [];
+  let inAcSectionForStoryId: string | null = null;
 
   function flushCurrent() {
     if (!currentReq) return;
@@ -33,16 +33,35 @@ export function parseMarkdownRequirements(markdown: string, projectId: string): 
   }
 
   for (const line of lines) {
+    const trimmed = line.trim();
     const headingMatch = line.match(/^(#{1,})\s+(.+)/);
+
     if (headingMatch) {
       flushCurrent();
       const hashCount = headingMatch[1].length;
       const level = hashCount - 1;
       const title = headingMatch[2].trim();
 
-      const resolvedLevel = headingToLevel[level] || 'story';
+      // Check if this heading is just an "Acceptance Criteria" section header under a story
+      if (/^acceptance criteria$/i.test(title)) {
+        // Find the closest story in levelStack
+        const storyInStack = [...levelStack].reverse().find((item) => item.levelName === 'story');
+        if (storyInStack) {
+          inAcSectionForStoryId = storyInStack.id;
+          continue;
+        }
+      } else {
+        inAcSectionForStoryId = null;
+      }
+
+      let resolvedLevel = headingToLevel[level] || 'story';
       if (!headingToLevel[level]) {
         warnings.push(`Line "${line}" has ${hashCount} heading markers, exceeding max depth 4. Falling back to "story" level.`);
+      }
+
+      // If heading title specifically denotes an AC (e.g. "### AC 1: ...", "### AC: ...", "### Given ...")
+      if (/^(?:ac(?:\s*\d+)?[:.-]|given\b)/i.test(title)) {
+        resolvedLevel = 'ac';
       }
 
       while (levelStack.length > 0 && levelStack[levelStack.length - 1].level >= level) {
@@ -56,9 +75,34 @@ export function parseMarkdownRequirements(markdown: string, projectId: string): 
 
       const id = randomId('req');
       currentReq = { id, projectId, parentId, title, level: resolvedLevel };
-      levelStack.push({ level, id });
-    } else if (currentReq && line.trim()) {
-      descriptionLines.push(line.trim());
+      levelStack.push({ level, id, levelName: resolvedLevel });
+    } else if (trimmed) {
+      // Check for bullet acceptance criteria under a story
+      const isBullet = /^[-*]\s+(.+)/.test(trimmed);
+      const isExplicitAcBullet = /^[-*]\s+(?:(?:(?:\[\s*\]\s*)?AC(?:\s*\d+)?[:.-]?\s*)|(?:Given\s+.*))/i.test(trimmed);
+
+      const targetStoryId = inAcSectionForStoryId || (currentReq && currentReq.level === 'story' ? currentReq.id : null);
+
+      if (targetStoryId && (isExplicitAcBullet || (inAcSectionForStoryId && isBullet))) {
+        // Extract bullet text
+        const rawContent = trimmed.replace(/^[-*]\s+/, '');
+        const cleanTitle = rawContent.replace(/^\[\s*\]\s*/, '').trim();
+
+        const acId = randomId('req');
+        requirements.push(
+          normalizeRequirement({
+            id: acId,
+            projectId,
+            parentId: targetStoryId,
+            title: cleanTitle.length > 120 ? cleanTitle.slice(0, 117) + '...' : cleanTitle,
+            description: cleanTitle,
+            level: 'ac',
+            status: 'DRAFT',
+          })
+        );
+      } else if (currentReq) {
+        descriptionLines.push(trimmed);
+      }
     }
   }
   flushCurrent();

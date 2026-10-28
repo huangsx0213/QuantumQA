@@ -12,7 +12,11 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
-      allowedHosts: ['www.vhuang1.ccwu.cc'],
+      allowedHosts: [
+        'www.vhuang1.ccwu.cc',
+        'stu-sg3.southeastasia.cloudapp.azure.com',
+        '.cloudapp.azure.com',
+      ],
     },
     plugins: [react()],
     resolve: {

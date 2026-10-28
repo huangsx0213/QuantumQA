@@ -33,7 +33,7 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
   };
 });
 
-import { useProviderConfigs } from '@/shared/hooks/useQueryHooks';
+import { useProviderConfigs, usePrdDocuments } from '@/shared/hooks/useQueryHooks';
 
 vi.mock('@/shared/hooks/useQueryHooks', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/shared/hooks/useQueryHooks')>();
@@ -44,6 +44,9 @@ vi.mock('@/shared/hooks/useQueryHooks', async (importOriginal) => {
         { id: 'p1', name: 'Azure OpenAI', type: 'azure-openai', model: 'gpt-4o', models: ['gpt-4o'], isActive: true },
         { id: 'p2', name: 'OpenAI Compatible', type: 'openai-compatible', model: 'gpt-4', models: ['gpt-4'], isActive: false },
       ],
+    }),
+    usePrdDocuments: vi.fn().mockReturnValue({
+      data: [],
     }),
   };
 });
@@ -468,5 +471,192 @@ describe('TestGenConfigPanel', () => {
     expect(htmlKnowledgeUpload.reset).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Run all stages automatically')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start Test Gen' })).toBeDisabled();
+  });
+
+  describe('PRD Document & Version filtering and provenance', () => {
+    const mockPrdDocs = [
+      {
+        id: 'doc-1',
+        title: 'Billing Specification',
+        currentVersionTag: 'v1.1',
+        versions: [
+          { id: 'ver-1', versionTag: 'v1.0', versionNumber: 1, fileName: 'billing-v1.0.md' },
+          { id: 'ver-2', versionTag: 'v1.1', versionNumber: 2, fileName: 'billing-v1.1.docx' },
+        ],
+      },
+      {
+        id: 'doc-2',
+        title: 'Auth PRD',
+        currentVersionTag: 'v1.0',
+        versions: [
+          { id: 'ver-3', versionTag: 'v1.0', versionNumber: 1, fileName: 'auth.docx' },
+        ],
+      },
+    ];
+
+    it('renders PRD Document & Version dropdown and search input when prdDocs exist', () => {
+      vi.mocked(usePrdDocuments).mockReturnValue({ data: mockPrdDocs } as any);
+      const reqs = buildTreeSample();
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={reqs} />);
+
+      expect(screen.getByPlaceholderText('Filter requirements...')).toBeInTheDocument();
+      expect(screen.getByTitle('Filter requirements tree by PRD Document or Version')).toBeInTheDocument();
+      expect(screen.getByText(/All Documents & Versions/)).toBeInTheDocument();
+      expect(screen.getByText('All Versions of "Billing Specification" (0 items)')).toBeInTheDocument();
+      expect(screen.getByText('All Versions of "Auth PRD" (0 items)')).toBeInTheDocument();
+    });
+
+    it('filters requirement tree by document and preserves parent epic hierarchy', () => {
+      vi.mocked(usePrdDocuments).mockReturnValue({ data: mockPrdDocs } as any);
+      const epic = makeRequirement({ id: 'epic-1', title: 'Main Epic', level: 'epic', parentId: null });
+      const storyDoc1 = makeRequirement({
+        id: 'story-doc-1',
+        title: 'Billing Story',
+        level: 'story',
+        parentId: 'epic-1',
+        documentId: 'doc-1',
+        documentVersionId: 'ver-1',
+      });
+      const storyDoc2 = makeRequirement({
+        id: 'story-doc-2',
+        title: 'Auth Story',
+        level: 'story',
+        parentId: 'epic-1',
+        documentId: 'doc-2',
+        documentVersionId: 'ver-3',
+      });
+
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={[epic, storyDoc1, storyDoc2]} />);
+
+      const select = screen.getByTitle('Filter requirements tree by PRD Document or Version');
+      fireEvent.change(select, { target: { value: 'doc:doc-1' } });
+
+      // Parent epic must remain visible
+      expect(screen.getByText('Main Epic')).toBeInTheDocument();
+      // Story matching doc-1 is shown
+      expect(screen.getByText('Billing Story')).toBeInTheDocument();
+      // Story from doc-2 should NOT be in the tree
+      expect(screen.queryByText('Auth Story')).toBeNull();
+    });
+
+    it('filters requirement tree by search query', () => {
+      vi.mocked(usePrdDocuments).mockReturnValue({ data: [] } as any);
+      const epic = makeRequirement({ id: 'epic-1', title: 'Main Epic', level: 'epic', parentId: null });
+      const story1 = makeRequirement({ id: 'story-1', title: 'Payment Processing', level: 'story', parentId: 'epic-1' });
+      const story2 = makeRequirement({ id: 'story-2', title: 'User Login', level: 'story', parentId: 'epic-1' });
+
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={[epic, story1, story2]} />);
+
+      const searchInput = screen.getByPlaceholderText('Filter requirements...');
+      fireEvent.change(searchInput, { target: { value: 'payment' } });
+
+      expect(screen.getByText('Main Epic')).toBeInTheDocument();
+      expect(screen.getByText('Payment Processing')).toBeInTheDocument();
+      expect(screen.queryByText('User Login')).toBeNull();
+    });
+
+    it('Select all only affects visible filtered stories', () => {
+      vi.mocked(usePrdDocuments).mockReturnValue({ data: mockPrdDocs } as any);
+      const epic = makeRequirement({ id: 'epic-1', title: 'Main Epic', level: 'epic', parentId: null });
+      const storyDoc1 = makeRequirement({
+        id: 'story-doc-1',
+        title: 'Billing Story',
+        level: 'story',
+        parentId: 'epic-1',
+        documentId: 'doc-1',
+      });
+      const storyDoc2 = makeRequirement({
+        id: 'story-doc-2',
+        title: 'Auth Story',
+        level: 'story',
+        parentId: 'epic-1',
+        documentId: 'doc-2',
+      });
+
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={[epic, storyDoc1, storyDoc2]} />);
+
+      // Filter by doc-1
+      const select = screen.getByTitle('Filter requirements tree by PRD Document or Version');
+      fireEvent.change(select, { target: { value: 'doc:doc-1' } });
+
+      // Click Select all (which only selects visible filtered stories)
+      const selectAll = screen.getAllByLabelText('Select all')[0];
+      fireEvent.click(selectAll);
+
+      // Now switch back to "all" documents
+      fireEvent.change(select, { target: { value: 'all' } });
+
+      // Requirements count badge should show 1 selected
+      expect(screen.getByText('1')).toBeInTheDocument();
+
+      // Since epic was expanded, both stories are in the document
+      expect(screen.getByText('Billing Story')).toBeInTheDocument();
+      expect(screen.getByText('Auth Story')).toBeInTheDocument();
+
+      // Test collapsing all and expanding all
+      fireEvent.click(screen.getByTitle('Collapse all'));
+      expect(screen.queryByText('Billing Story')).toBeNull();
+      expect(screen.queryByText('Auth Story')).toBeNull();
+
+      fireEvent.click(screen.getByTitle('Expand all'));
+      expect(screen.getByText('Billing Story')).toBeInTheDocument();
+      expect(screen.getByText('Auth Story')).toBeInTheDocument();
+    });
+
+    it('shows PRD Document name and version in detail view metadata when selected', () => {
+      vi.mocked(usePrdDocuments).mockReturnValue({ data: mockPrdDocs } as any);
+      const story = makeRequirement({
+        id: 'story-1',
+        title: 'Invoice Generation',
+        level: 'story',
+        parentId: null,
+        documentId: 'doc-1',
+        sourceAnchor: 'Section 3.2',
+      });
+
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={[story]} />);
+
+      // Click story to view details
+      fireEvent.click(screen.getByText('Invoice Generation'));
+
+      expect(screen.getByText('Billing Specification (v1.1)')).toBeInTheDocument();
+      expect(screen.getByText('Section 3.2')).toBeInTheDocument();
+    });
+
+    it('toggles individual epic with chevron button and all epics with header button', () => {
+      const epic1 = makeRequirement({ id: 'epic-1', title: 'Epic 1', level: 'epic', parentId: null });
+      const story1 = makeRequirement({ id: 'story-1', title: 'Story 1', level: 'story', parentId: 'epic-1' });
+      const epic2 = makeRequirement({ id: 'epic-2', title: 'Epic 2', level: 'epic', parentId: null });
+      const story2 = makeRequirement({ id: 'story-2', title: 'Story 2', level: 'story', parentId: 'epic-2' });
+
+      renderWithQuery(<TestGenConfigPanel {...defaultProps} requirements={[epic1, story1, epic2, story2]} />);
+
+      // Initially collapsed
+      expect(screen.queryByText('Story 1')).toBeNull();
+      expect(screen.queryByText('Story 2')).toBeNull();
+
+      // Click Expand button
+      fireEvent.click(screen.getByText('Expand'));
+      expect(screen.getByText('Story 1')).toBeInTheDocument();
+      expect(screen.getByText('Story 2')).toBeInTheDocument();
+
+      // Toggle chevron on Epic 1 to collapse only Epic 1
+      const epic1Row = screen.getByText('Epic 1').closest('div')!;
+      const chevron1 = epic1Row.querySelector('button')!;
+      fireEvent.click(chevron1);
+
+      expect(screen.queryByText('Story 1')).toBeNull();
+      expect(screen.getByText('Story 2')).toBeInTheDocument();
+
+      // Click chevron on Epic 1 again to re-expand Epic 1
+      fireEvent.click(chevron1);
+      expect(screen.getByText('Story 1')).toBeInTheDocument();
+      expect(screen.getByText('Story 2')).toBeInTheDocument();
+
+      // Click Collapse button to collapse all
+      fireEvent.click(screen.getByText('Collapse'));
+      expect(screen.queryByText('Story 1')).toBeNull();
+      expect(screen.queryByText('Story 2')).toBeNull();
+    });
   });
 });

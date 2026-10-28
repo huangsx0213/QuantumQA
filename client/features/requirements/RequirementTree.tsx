@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import type { Requirement } from "../../../shared/contracts/index";
-import { useRequirementMutations } from "../../shared/hooks/useQueryHooks";
+import { useRequirementMutations, usePrdDocuments } from "../../shared/hooks/useQueryHooks";
 import {
   ChevronRight,
   ChevronDown,
@@ -9,6 +9,8 @@ import {
   Copy,
   ClipboardPaste,
   GitBranch,
+  FileText,
+  Plus,
 } from "lucide-react";
 import { ConfirmModal } from "@/shared/ui/ConfirmModal";
 
@@ -23,6 +25,7 @@ interface Props {
   onReorder?: (parentId: string | null, fromId: string, toId: string) => void;
   onCopy?: (id: string) => void;
   onPaste?: (parentId: string | null) => void;
+  onAddChild?: (parentId: string, level: Requirement["level"]) => void;
   clipboardExists?: boolean;
   expandedIds: Set<string>;
   onToggleExpand: (id: string) => void;
@@ -44,11 +47,14 @@ export function RequirementTree({
   onReorder,
   onCopy,
   onPaste,
+  onAddChild,
   clipboardExists = false,
   expandedIds,
   onToggleExpand,
 }: Props) {
   const { remove, update: _update } = useRequirementMutations(projectId);
+  const { data: prdDocs = [] } = usePrdDocuments(projectId);
+  const prdDocMap = useMemo(() => new Map(prdDocs.map((d) => [d.id, d])), [prdDocs]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -118,12 +124,20 @@ export function RequirementTree({
           <div key={r.id} className="space-y-px">
             <div
               draggable
+              role="treeitem"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(isSelected ? "" : r.id);
+                }
+              }}
               onDragStart={(e) => handleDragStart(e, r.id)}
               onDragOver={(e) => handleDragOver(e, r.id)}
               onDragLeave={() => handleDragLeave(r.id)}
               onDrop={(e) => handleDrop(e, r.id)}
               onDragEnd={handleDragEnd}
-              className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-all duration-150 ${
+              className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-sm transition-all duration-150 outline-none focus:ring-1 focus:ring-blue-500/50 ${
                 isSelected
                   ? "bg-blue-50 text-slate-900 border border-blue-200 shadow-sm"
                   : isDragOver
@@ -131,7 +145,7 @@ export function RequirementTree({
                   : "text-slate-700 hover:bg-slate-100 hover:text-slate-900 border border-transparent"
               }`}
               style={{ paddingLeft: `${depth * 4 + 4}px` }}
-              onClick={() => onSelect(r.id)}
+              onClick={() => onSelect(isSelected ? "" : r.id)}
               data-testid="tree-row"
             >
               {isExpandable ? (
@@ -163,6 +177,22 @@ export function RequirementTree({
                   </span>
                 </>
               )}
+              {r.documentId && (
+                (() => {
+                  const doc = prdDocMap.get(r.documentId);
+                  const tooltip = doc
+                    ? `PRD: ${doc.title}${doc.currentVersionTag ? ` (${doc.currentVersionTag})` : ""}${r.sourceAnchor ? ` · ${r.sourceAnchor}` : ""}`
+                    : (r.sourceAnchor ? `PRD: ${r.sourceAnchor}` : "Linked to PRD document");
+                  return (
+                    <span title={tooltip}>
+                      <FileText
+                        size={11}
+                        className="text-blue-500/80 shrink-0"
+                      />
+                    </span>
+                  );
+                })()
+              )}
               {editingId === r.id ? (
                 <input
                   className="flex-1 min-w-0 px-1.5 py-0.5 text-sm bg-white border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -186,6 +216,19 @@ export function RequirementTree({
                 </span>
               )}
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-auto">
+                {onAddChild && r.level === "epic" && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddChild(r.id, "story");
+                    }}
+                    className="p-1 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
+                    title="Add Story to this Epic"
+                    aria-label="Add Story to this Epic"
+                  >
+                    <Plus size={12} />
+                  </button>
+                )}
                 {onCopy && (
                   <button
                     onClick={(e) => {
@@ -194,6 +237,7 @@ export function RequirementTree({
                     }}
                     className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                     title="Copy"
+                    aria-label="Copy requirement"
                   >
                     <Copy size={12} />
                   </button>
@@ -206,6 +250,7 @@ export function RequirementTree({
                     }}
                     className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                     title="Paste as Child"
+                    aria-label="Paste child requirement"
                   >
                     <ClipboardPaste size={12} />
                   </button>
@@ -218,6 +263,7 @@ export function RequirementTree({
                   }}
                   className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
                   title="Edit title"
+                  aria-label="Edit title"
                 >
                   <Edit2 size={12} />
                 </button>
@@ -228,6 +274,7 @@ export function RequirementTree({
                   }}
                   className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
                   title="Delete"
+                  aria-label="Delete requirement"
                 >
                   <Trash2 size={12} />
                 </button>
@@ -239,6 +286,7 @@ export function RequirementTree({
                     saveTitle(r.id);
                   }}
                   className="p-1 text-green-600 hover:bg-green-100 rounded ml-1 shrink-0 transition-colors"
+                  aria-label="Save title"
                 >
                   <ChevronDown size={12} />
                 </button>
@@ -257,6 +305,7 @@ export function RequirementTree({
                   onReorder={onReorder}
                   onCopy={onCopy}
                   onPaste={onPaste}
+                  onAddChild={onAddChild}
                   clipboardExists={clipboardExists}
                   expandedIds={expandedIds}
                   onToggleExpand={onToggleExpand}

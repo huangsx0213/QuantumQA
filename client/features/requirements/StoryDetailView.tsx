@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Save, Edit3, Eye, AlertTriangle, Check, X, GitBranch, Pencil } from "lucide-react";
+import { Save, Edit3, Eye, AlertTriangle, Check, X, GitBranch, Pencil, FileText, ArrowLeft } from "lucide-react";
 import type { Requirement } from "../../../shared/contracts/index";
-import { useRequirementMutations, useRequirements } from "../../shared/hooks/useQueryHooks";
+import { useRequirementMutations, useRequirements, usePrdDocuments } from "../../shared/hooks/useQueryHooks";
 import { parseStoryMarkdown } from "../../shared/requirements/format-parser";
 import { StoryFormatHelpTooltip } from "./StoryFormatHelpTooltip";
 import { ACList } from "./ACList";
@@ -13,6 +13,7 @@ interface Props {
   acs: Requirement[];
   projectId: string;
   onSaved: () => void;
+  onClose?: () => void;
 }
 
 const statusOptions: { value: Requirement["status"]; label: string }[] = [
@@ -21,9 +22,11 @@ const statusOptions: { value: Requirement["status"]; label: string }[] = [
   { value: "DEPRECATED", label: "Deprecated" },
 ];
 
-export function StoryDetailView({ story, acs, projectId, onSaved }: Props) {
+export function StoryDetailView({ story, acs, projectId, onSaved, onClose }: Props) {
   const { update, updateId } = useRequirementMutations(projectId);
   const { data: allItems = [] } = useRequirements(projectId);
+  const { data: prdDocs = [] } = usePrdDocuments(projectId);
+  const prdDoc = prdDocs.find((d) => d.id === story.documentId);
   const [idDraft, setIdDraft] = useState(story.id);
   const [idEditing, setIdEditing] = useState(false);
   const [title, setTitle] = useState(story.title);
@@ -93,13 +96,51 @@ export function StoryDetailView({ story, acs, projectId, onSaved }: Props) {
     }
   };
 
+  const isDirty = useMemo(() => {
+    return (
+      title !== story.title ||
+      description !== (story.description || "") ||
+      status !== (story.status || "DRAFT") ||
+      isFlow !== Boolean(story.isFlow)
+    );
+  }, [title, description, status, isFlow, story]);
+
+  const handleSafeClose = () => {
+    if (isDirty) {
+      if (window.confirm("You have unsaved changes in this Story. Discard changes and return to overview?")) {
+        onClose?.();
+      }
+    } else {
+      onClose?.();
+    }
+  };
+
   return (
     <div className="bg-white h-full flex flex-col min-h-0 relative">
       <div className="shrink-0 max-w-5xl mx-auto w-full px-8 pt-6 pb-5 border-b border-slate-200">
         <div className="flex items-center gap-2 mb-3 text-xs">
+          {onClose && (
+            <>
+              <button
+                onClick={handleSafeClose}
+                className="flex items-center gap-1 text-slate-500 hover:text-blue-600 px-2 py-0.5 rounded-md hover:bg-blue-50 transition-colors font-medium border border-slate-200 hover:border-blue-200 mr-1 cursor-pointer"
+                title="Return to PRD & Requirements Overview"
+              >
+                <ArrowLeft size={12} />
+                <span>Overview</span>
+              </button>
+              <span className="text-slate-300">·</span>
+            </>
+          )}
           <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 uppercase tracking-wider">
             Story
           </span>
+          {isDirty && (
+            <span className="text-[10.5px] font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              Unsaved changes
+            </span>
+          )}
           {epic && (
             <>
               <span className="text-slate-300">·</span>
@@ -118,6 +159,19 @@ export function StoryDetailView({ story, acs, projectId, onSaved }: Props) {
           >
             {status}
           </span>
+          {story.documentId && (
+            <>
+              <span className="text-slate-300">·</span>
+              <span
+                className="text-[10.5px] font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1"
+                title={story.sourceAnchor || undefined}
+              >
+                <FileText size={11} className="text-blue-500" />
+                PRD: {prdDoc?.title || "Document"} {prdDoc?.currentVersionTag ? `(${prdDoc.currentVersionTag})` : ""}
+                {story.sourceAnchor ? ` · ${story.sourceAnchor}` : ""}
+              </span>
+            </>
+          )}
         </div>
 
         <div className="flex items-start gap-4">
@@ -151,6 +205,16 @@ export function StoryDetailView({ story, acs, projectId, onSaved }: Props) {
             >
               <Save size={16} /> Save
             </button>
+            {onClose && (
+              <button
+                onClick={handleSafeClose}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors cursor-pointer"
+                title="Close and return to overview"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            )}
           </div>
         </div>
 

@@ -92,4 +92,34 @@ describe('compactReActConversation', () => {
       expect(c).toMatch(/total \d+ chars/);
     }
   });
+
+  it('does NOT compact draft_case_detail_query tool results even when older than keep window', () => {
+    const base: ChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'user' },
+    ];
+    const draftContent = JSON.stringify({ 'TC-001': { id: 'TC-001', steps: ['step1', 'step2'] } });
+    const rounds: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: 'round1',
+        toolCalls: [{ type: 'function', function: { name: 'draft_case_detail_query', arguments: '{"caseId":["TC-001"]}' }, id: 'draft_call_1' }],
+      },
+      { role: 'tool', content: draftContent, toolCallId: 'draft_call_1' },
+      asst(2, ['b1'], 'round2'),
+      tool('b1', 'regular_tool_content_2'.repeat(50)),
+      asst(3, ['c1'], 'round3'),
+      tool('c1', 'regular_tool_content_3'.repeat(50)),
+      asst(4, ['d1'], 'round4'),
+      tool('d1', 'regular_tool_content_4'.repeat(50)),
+      asst(5, ['e1'], 'round5'),
+      tool('e1', 'regular_tool_content_5'.repeat(50)),
+    ];
+    const out = compactReActConversation([...base, ...rounds], base.length);
+    // draft_case_detail_query is in round 1 (> 3 rounds ago), but must remain intact
+    const draftToolMsg = out.find((m) => m.role === 'tool' && m.toolCallId === 'draft_call_1');
+    expect(draftToolMsg).toBeDefined();
+    expect(draftToolMsg?.content).toBe(draftContent);
+    expect(draftToolMsg?.content).not.toContain('[earlier tool result]');
+  });
 });

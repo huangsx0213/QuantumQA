@@ -36,12 +36,30 @@ function isRoundStart(m: ChatMessage): boolean {
  * @param allMessages  全量消息（含 base）
  * @param baseCount    base 消息条数（system + user，即 messages.length）
  */
+/**
+ * Tools whose results represent critical baseline entities (like draft test cases)
+ * that cannot be reconstructed from summaries and must remain verbatim in context.
+ */
+const UNCOMPACTED_TOOLS = new Set(['draft_case_detail_query']);
+
 export function compactReActConversation(allMessages: ChatMessage[], baseCount: number): ChatMessage[] {
   if (allMessages.length <= baseCount) return allMessages;
 
   // 先收集更早轮次的 (assistantIdx, toolIdx) 以便摘要化，同时保留最近几轮完整
   const base = allMessages.slice(0, baseCount);
   const history = allMessages.slice(baseCount);
+
+  // 映射 toolCallId -> toolName，用于判断特定工具是否免于压缩
+  const toolNameById = new Map<string, string>();
+  for (const m of history) {
+    if (m.role === 'assistant' && Array.isArray(m.toolCalls)) {
+      for (const tc of m.toolCalls) {
+        if (tc.id && tc.function?.name) {
+          toolNameById.set(tc.id, tc.function.name);
+        }
+      }
+    }
+  }
 
   // 按轮分组：每轮 = 1 条 assistant(toolCalls) + 其后 N 条 tool（直到下一条 assistant）
   const rounds: Array<{ toolIdx: number[] }> = [];
@@ -67,7 +85,10 @@ export function compactReActConversation(allMessages: ChatMessage[], baseCount: 
   const compacted: ChatMessage[] = [...base];
   for (let i = 0; i < history.length; i++) {
     const m = history[i];
-    if (oldRoundToolIdx.has(i) && typeof m.content === 'string') {
+    const toolName = m.toolCallId ? toolNameById.get(m.toolCallId) : undefined;
+    const isUncompacted = toolName && UNCOMPACTED_TOOLS.has(toolName);
+
+    if (oldRoundToolIdx.has(i) && typeof m.content === 'string' && !isUncompacted) {
       // 摘要化旧工具结果：保留短前缀 + 总长度，提示 LLM 已在更早上下文见过
       const full = m.content;
       const preview = full.length <= OLD_TOOL_RESULT_PREVIEW

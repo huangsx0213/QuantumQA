@@ -664,7 +664,7 @@ export function makeDraftCaseDetailQuery(
   const byId = new Map(draftCases.map((d) => [d.id, d]));
   return {
     name: 'draft_case_detail_query',
-    description: 'Pull the FULL text of one or more draft test cases (all steps, preconditions, testData, tags) by case id. Use ONLY when the compact case summary in your input is insufficient — e.g. to run the F17 component-vs-integration redundancy check, verify step atomicity, or inspect a step\'s exact expected text before changing it. Pass a single caseId or an array.',
+    description: 'Pull the FULL text of draft test cases (all steps, preconditions, testData, intent, tags) by case id. Pass an array containing ALL draft case ids to pull all draft cases in ONE batch call in Round 1.',
     schema: z.object({
       caseId: z.union([z.string(), z.array(z.string())]).describe('A single draft case id (e.g. "TC-001") or an array of ids'),
     }),

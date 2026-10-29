@@ -140,12 +140,20 @@ ${JSON.stringify(schema, null, 2)}${hintsSection}${contextSection}`;
 // ReAct Loop
 // ============================================================
 
-const MAX_REACT_ROUNDS = 30;
+const MAX_REACT_ROUNDS = Number(process.env.TEST_GEN_MAX_REACT_ROUNDS) || 40;
 
 // E3: Truncate large tool results to avoid context bloat
 const MAX_TOOL_RESULT_CHARS = 6000;
-function truncateToolResult(content: string): string {
+const UNTRUNCATED_TOOLS = new Set(['draft_case_detail_query']);
+
+function truncateToolResult(content: string, toolName?: string): string {
   if (!content || typeof content !== 'string') return '';
+  if (toolName && UNTRUNCATED_TOOLS.has(toolName)) {
+    // Baseline entities like draft test cases require full fidelity (29 cases ~70k chars)
+    const maxChars = 120_000;
+    if (content.length <= maxChars) return content;
+    return content.slice(0, maxChars) + `\n...(truncated, ${content.length} chars total)`;
+  }
   if (content.length <= MAX_TOOL_RESULT_CHARS) return content;
   return content.slice(0, MAX_TOOL_RESULT_CHARS) + `\n...(truncated, ${content.length} chars total)`;
 }
@@ -476,7 +484,7 @@ async function runAgentReActLoop(
         };
         toolCallRecords.push(toolCallRecord);
         observer?.onToolCall?.(agentName, toolCallRecord);
-        toolResults.push({ role: 'tool', content: truncateToolResult(serializedResult.content), toolCallId: tc.id });
+        toolResults.push({ role: 'tool', content: truncateToolResult(serializedResult.content, tc.name), toolCallId: tc.id });
         observer?.onStep?.(agentName, round + 1, `Called ${tc.name} (${latencyMs}ms)`);
       } catch (err: any) {
         const latencyMs = Date.now() - skillStart;
@@ -908,7 +916,7 @@ export async function callLLMWithStructuredOutput<T>(
   // tool results — the nudge preserves them. Only triggers when no JSON was
   // found at all (not for schema-validation failures, which need Phase 2's
   // error-feedback loop).
-  if (phase1FailReason === 'no JSON block found in contentText' && conversationMessages.length > 2) {
+  if ((phase1FailReason === 'no JSON block found in contentText' || phase1FailReason === 'no contentText') && conversationMessages.length > 2) {
     llmLog.info('Phase 1.5: nudging LLM to output final JSON (full conversation context)');
     observer?.onStep?.(name, 2, 'Phase 1.5: Nudge for JSON output');
 

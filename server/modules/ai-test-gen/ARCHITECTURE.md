@@ -155,7 +155,7 @@ Round 2: LLM 继续思考 → 调用更多 tool(s) → 观察结果
 Round N: LLM 思考/总结 → 无 tool calls → 结束 ReAct，转入后续 JSON 提取
 ```
 
-- 最多 15 轮（`MAX_REACT_ROUNDS`）
+- 最多 40 轮（`MAX_REACT_ROUNDS`，支持环境变量 `TEST_GEN_MAX_REACT_ROUNDS` 配置）
 - 无 tool calls 时自动退出
 - 温度：0.5（Phase 1），0（Phase 2）
 

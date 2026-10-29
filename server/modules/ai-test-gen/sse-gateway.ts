@@ -17,7 +17,7 @@ export interface SSEGatewayOptions {
 
 export class SSEGateway {
   private readonly emitters = new Map<string, EventEmitter>();
-  private readonly streams = new Map<string, SseStream>();
+  private readonly streams = new Map<string, Set<SseStream>>();
   private readonly eventBuffers = new Map<string, Array<{ event: string; data: unknown }>>();
   private readonly bufferTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lastEvents = new Map<string, { event: string; data: unknown }>();
@@ -48,8 +48,12 @@ export class SSEGateway {
     if (this.checkpointEvent && event === this.checkpointEvent) {
       this.lastEvents.set(runId, { event, data });
     }
-    if (this.isCleanupEvent(event)) {
+    if (this.isCleanupEvent(event) || event === 'checkpoint:resolved') {
       this.lastEvents.delete(runId);
+      const buf = this.eventBuffers.get(runId);
+      if (buf) {
+        this.eventBuffers.set(runId, buf.filter(e => e.event !== 'checkpoint:waiting'));
+      }
     }
 
     const emitter = this.getEmitter(runId);
@@ -59,6 +63,7 @@ export class SSEGateway {
         buf = [];
         this.eventBuffers.set(runId, buf);
       }
+      if (buf.length >= 100) buf.shift();
       buf.push({ event, data });
     } else {
       emitter.emit('sse', event, data);
@@ -76,13 +81,19 @@ export class SSEGateway {
 
     let cleaned = false;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
+    const streamObj: SseStream = { res, heartbeat: null as any };
+
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       emitter.off('sse', onSse);
       if (heartbeat) clearInterval(heartbeat);
       res.end();
-      this.streams.delete(runId);
+      const streamSet = this.streams.get(runId);
+      if (streamSet) {
+        streamSet.delete(streamObj);
+        if (streamSet.size === 0) this.streams.delete(runId);
+      }
     };
 
     const onSse = (event: string, data: unknown) => {
@@ -119,16 +130,25 @@ export class SSEGateway {
     heartbeat = setInterval(() => {
       res.write(`event: heartbeat\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
     }, HEARTBEAT_INTERVAL);
+    streamObj.heartbeat = heartbeat;
 
-    this.streams.set(runId, { res, heartbeat });
+    let streamSet = this.streams.get(runId);
+    if (!streamSet) {
+      streamSet = new Set();
+      this.streams.set(runId, streamSet);
+    }
+    streamSet.add(streamObj);
+
     reqOnClose(res, cleanup);
   }
 
   cleanup(runId: string): void {
-    const stream = this.streams.get(runId);
-    if (stream) {
-      stream.res.end();
-      clearInterval(stream.heartbeat);
+    const streamSet = this.streams.get(runId);
+    if (streamSet) {
+      for (const stream of streamSet) {
+        stream.res.end();
+        if (stream.heartbeat) clearInterval(stream.heartbeat);
+      }
       this.streams.delete(runId);
     }
     this.emitters.delete(runId);

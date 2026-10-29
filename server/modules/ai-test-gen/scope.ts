@@ -321,7 +321,7 @@ recordAgentComplete(agentName: string, params: {
       prompt_tokens: this.totalPromptTokens,
       completion_tokens: this.totalCompletionTokens,
       reasoning_tokens: this.totalReasoningTokens,
-      total_tokens: this.totalPromptTokens + this.totalCompletionTokens + this.totalReasoningTokens,
+      total_tokens: this.totalPromptTokens + this.totalCompletionTokens,
     };
     pipelineRepo.markRunCompleted(this.runId, 'complete', usage);
     this.emit('pipeline:complete', {

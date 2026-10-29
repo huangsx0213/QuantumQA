@@ -508,6 +508,7 @@ export function createQualityOutputProfile(draftCases: QualityDraftCase[] = []):
     expectedTestLevel: d.testLevel ?? d.expectedTestLevel,
     coveredConditions: d.coveredConditions ?? [],
     referencedComponentConditions: d.referencedComponentConditions ?? [],
+    steps: d.steps,
   }));
   return {
     toolSchema: makeSchemaOpenAICompatible(zodToJsonSchema(QualityRuntimeSchema)),
@@ -603,9 +604,10 @@ export function reconcileCoverageMatrix(
   if (!conditions.length) return { rows: [], summary: { totalConditions: 0, coveredConditions: 0, missingConditions: 0, byTestLevel: {}, byTechnique: {}, byCategory: {} } } as any;
   const llmRows = llmMatrix?.rows ?? [];
 
-  // Build conditionId → testCaseIds mapping from finalTestCases
+  // Build conditionId → testCaseIds mapping from finalTestCases (only non-rejected cases contribute to coverage)
   const caseIdsByCondition = new Map<string, string[]>();
   for (const tc of finalTestCases) {
+    if (tc.status === 'rejected') continue;
     const allCondIds = new Set<string>();
     if (tc.conditionId) allCondIds.add(tc.conditionId);
     for (const cid of tc.coveredConditions ?? []) allCondIds.add(cid);
@@ -719,8 +721,11 @@ function tryExtractQualityFromEmitTools(
     if (caseId) reviewByCase.set(caseId, rec.input as Record<string, unknown>);
   }
 
-  const finalTestCases: Record<string, unknown>[] = draftCases.map((draft) => {
-    const base: Record<string, unknown> = {
+  const finalTestCases: Record<string, unknown>[] = [];
+  for (const draft of draftCases) {
+    const review = reviewByCase.get(draft.id);
+    if (!review) continue;
+    finalTestCases.push({
       id: draft.id,
       title: draft.title ?? `Case ${draft.id}`,
       conditionId: draft.conditionId,
@@ -735,20 +740,13 @@ function tryExtractQualityFromEmitTools(
       testData: draft.testData ?? [],
       steps: draft.steps ?? [],
       tags: draft.tags ?? [],
-    };
-    const review = reviewByCase.get(draft.id);
-    if (!review) {
-      return { ...base, status: 'approved', reviewSummary: 'No changes required.', changeLog: [] };
-    }
-    return {
-      ...base,
       status: review.status,
       reviewSummary: review.reviewSummary,
       changeLog: Array.isArray(review.changeLog) ? review.changeLog : [],
       ...(Array.isArray(review.steps) ? { steps: review.steps } : {}),
       ...(Array.isArray(review.testData) ? { testData: review.testData } : {}),
-    };
-  });
+    });
+  }
 
   // last-write-wins by conditionId
   const rowByCond = new Map<string, Record<string, unknown>>();

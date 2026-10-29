@@ -229,6 +229,16 @@ export class TestGenRepository {
     }));
   }
 
+  getRunningRuns(): any[] {
+    const rows = this.database.prepare(
+      "SELECT id, project_id, status, phase, thread_id, mode, config, updated_at FROM test_gen_runs WHERE status = 'RUNNING'"
+    ).all();
+    return (rows as any[]).map(r => ({
+      ...r,
+      config: r.config ? JSON.parse(r.config) : null,
+    }));
+  }
+
   getRunWithThreadId(runId: string): any {
     const row = this.database.prepare(
       'SELECT id, project_id, status, phase, thread_id, mode, config, current_batch, total_batches FROM test_gen_runs WHERE id = ?'

@@ -59,8 +59,7 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
       if (state.generationMode === 'flow' || state.generationMode === 'mixed') {
         if (state.generationMode === 'mixed') {
           // Mixed mode: component conditions are in the SAME batch's state
-          // (already approved by the reviewer). Load from current state, not
-          // from previous batch logs.
+          // (already approved by the reviewer). Load from current state first:
           const currentConditions = state.approvedConditions ?? state.testConditions ?? [];
           for (const condition of currentConditions) {
             if (condition.conditionType !== 'component') continue;
@@ -71,6 +70,18 @@ export function makeDesignerNode(opts: DesignerNodeOptions) {
               requirementId: condition.requirementId,
               condition: condition.condition,
             });
+          }
+          // Also supplement with component conditions from previous batches / reference runs
+          for (const condition of loadComponentConditions(state.runId)) {
+            const referenceId = `component:${condition.requirementId}:${condition.id}`;
+            if (!availableComponentConditions.has(referenceId)) {
+              availableComponentConditions.set(referenceId, {
+                referenceId,
+                conditionId: condition.id,
+                requirementId: condition.requirementId,
+                condition: condition.condition,
+              });
+            }
           }
         } else {
           // Flow mode: load component conditions from previous batch logs

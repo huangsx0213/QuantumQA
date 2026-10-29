@@ -116,7 +116,7 @@ export function useTestGenRun(currentProjectId: string | null, options?: UseTest
   }, [state.nodes, state.isRunning, state.selectedNodeId, state.autoFollowEnabled]);
 
   const { data: agentLogs = [] } = useAgentLogs(
-    state.runId ?? '', undefined, state.runId ? refetchLogsMs : 0,
+    state.runId ?? '', undefined, (state.runId && state.isRunning) ? refetchLogsMs : 0,
   );
 
   const lastMergedLogsRef = useRef<any[]>([]);

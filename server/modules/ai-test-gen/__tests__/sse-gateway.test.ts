@@ -70,4 +70,13 @@ describe('SSEGateway', () => {
     // lastEvent should be replayed on attach
     expect(res.write).toHaveBeenCalledWith(expect.stringContaining('step:takeover'));
   });
+
+  it('clears checkpoint lastEvent on checkpoint:resolved', () => {
+    const gw = new SSEGateway();
+    gw.emit('run-6', 'checkpoint:waiting', { checkpointNumber: 1 });
+    gw.emit('run-6', 'checkpoint:resolved', { checkpointNumber: 1, action: 'approve' });
+    const res = mockRes();
+    gw.attachStream('run-6', res);
+    expect(res.write).not.toHaveBeenCalledWith(expect.stringContaining('checkpoint:waiting'));
+  });
 });

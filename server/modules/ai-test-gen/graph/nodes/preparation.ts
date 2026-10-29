@@ -154,8 +154,9 @@ export function makePreparationNode(opts: PreparationNodeOptions) {
     // then supplement with other flows that share requirementId overlap with the current batch as additional integration scenarios
     const allBlueprints = state.businessFlowBlueprints ?? [];
     const selectedFlowIdSet = new Set(state.selectedFlowIds ?? []);
+    const isFlowSelected = (f: any) => selectedFlowIdSet.has(f.id) || Boolean(f.flowStoryId && selectedFlowIdSet.has(f.flowStoryId));
     const relevantFlowBlueprints = allBlueprints.filter(f => {
-      if (selectedFlowIdSet.has(f.id)) return true; // User-selected flows are always retained
+      if (isFlowSelected(f)) return true; // User-selected flows are always retained
       return f.steps?.some((s: any) =>
         (s.requirementIds ?? []).some((rid: string) => currentReqIds.has(rid))
       );
@@ -163,7 +164,7 @@ export function makePreparationNode(opts: PreparationNodeOptions) {
     // Mark which flows were explicitly selected by the user, so the prompt can distinguish strong signals vs. derived ones
     const relevantFlowsWithFlag = relevantFlowBlueprints.map(f => ({
       ...f,
-      userSelected: selectedFlowIdSet.has(f.id),
+      userSelected: isFlowSelected(f),
     }));
 
     log.kv('crossEpicDeps', crossEpicDependencies.length);

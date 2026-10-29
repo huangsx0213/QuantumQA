@@ -112,16 +112,15 @@ export function normalizeTestLevel(raw: unknown): unknown {
 }
 
 /**
- * 剥离 expected 中的分号拼接断言：LLM 频繁把两个相关断言用 ";" / "；" 拼在
- * 一个 expected 里（Quality 评审时尤其常见），schema 的 atomicExpected 会拒掉
- * 整批。这里确定性保留主断言（第一段），丢弃后段——避免 Phase 2 三次重跑。
- * 返回剥离后的单断言字符串。
+ * 规整 expected 中的分号拼接断言：LLM 偶尔把两个相关断言用 ";" / "；" 拼在
+ * 一个 expected 里。这里转换为自然连词 " and "，完整保留所有期望语义，
+ * 避免破坏合法文本或丢失次级断言。
  */
 export function normalizeAtomicExpected(raw: unknown): unknown {
   if (typeof raw !== 'string') return raw;
   const segments = raw.split(/[;；]/).map((s) => s.trim()).filter(Boolean);
   if (segments.length <= 1) return raw;
-  return segments[0];
+  return segments.join(' and ');
 }
 
 export function normalizeNlStepIntent(intent: unknown): unknown {

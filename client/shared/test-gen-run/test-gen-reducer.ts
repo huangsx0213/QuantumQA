@@ -249,7 +249,7 @@ if (type === 'pipeline:context' || type === 'pipeline:budget' || type === 'phase
           }));
           return { ...state, nodes, checkpointData, thinkingTextByNode, batchProgress, runSummary, isRunning: false };
         case 'pipeline:error':
-          return { ...state, error: { code: 'API_ERROR', message: data.message || 'Test gen error', detail: data } };
+          return { ...state, error: { code: 'API_ERROR', message: data.message || 'Test gen error', detail: data }, isRunning: false };
         default:
           break;
       }

@@ -48,6 +48,7 @@ export interface CaseInput {
   testLevel?: string;
   conditionId?: string;
   requirementId?: string;
+  status?: string;
 }
 
 /**
@@ -136,6 +137,7 @@ export class CoverageIndex {
   }
 
   addCase(tc: CaseInput): void {
+    if (tc.status === 'rejected') return;
     const reqId = tc.requirementId;
     if (!reqId) return;
     mergeCaseSummary(this.summary, tc);

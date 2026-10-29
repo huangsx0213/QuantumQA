@@ -131,22 +131,20 @@ describe('Quality emit-extract merge', () => {
     expect((parsed as any).coverageMatrix).toBeDefined();
   });
 
-  it('defaults a case with no emit_review to approved + empty changeLog', () => {
+  it('does not auto-approve cases with no emit_review, throwing missing draft case error', () => {
     const records: ToolCallRecord[] = [
       reviewRecord({ caseId: 'TC-1', status: 'approved', reviewSummary: 'ok', changeLog: [] }),
     ];
     const profile = createQualityOutputProfile(draftCases);
     const raw = profile.emitExtract!(records, '', 'quality_manager');
-    const parsed = profile.parse(profile.normalize(raw!));
-    const tc2 = parsed.finalTestCases.find((c) => c.id === 'TC-2')!;
-    expect(tc2.status).toBe('approved');
-    expect(tc2.changeLog).toEqual([]);
+    expect(() => profile.parse(profile.normalize(raw!))).toThrow(/Missing final reviewed cases for draft case ids: TC-2/);
   });
 
   it('takes the LAST emit_review for the same caseId (overwrite)', () => {
     const records: ToolCallRecord[] = [
       reviewRecord({ caseId: 'TC-1', status: 'approved', reviewSummary: 'first', changeLog: [] }),
       reviewRecord({ caseId: 'TC-1', status: 'rejected', reviewSummary: 'overwritten', changeLog: [] }),
+      reviewRecord({ caseId: 'TC-2', status: 'approved', reviewSummary: 'ok', changeLog: [] }),
     ];
     const profile = createQualityOutputProfile(draftCases);
     const raw = profile.emitExtract!(records, '', 'quality_manager');

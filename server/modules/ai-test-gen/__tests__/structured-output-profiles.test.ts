@@ -482,7 +482,7 @@ describe('qualityOutputProfile', () => {
     expect(clog[1].reason).toBe('');
   });
 
-  it('strips a semicolon-joined expected to the first assertion (real-world Quality Phase 2 retry cause)', () => {
+  it('normalizes a semicolon-joined expected preserving all assertions with natural conjunction', () => {
     const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
       finalTestCases: [makeQualityCase({
         steps: [{
@@ -492,10 +492,10 @@ describe('qualityOutputProfile', () => {
         }],
       })],
     }));
-    expect(parsed.finalTestCases[0].steps[0].expected).toBe('The form submission is blocked');
+    expect(parsed.finalTestCases[0].steps[0].expected).toBe('The form submission is blocked and no navigation occurs.');
   });
 
-  it.each(['；', ';'])('strips a %s-joined expected keeping the primary assertion', (sep) => {
+  it.each(['；', ';'])('normalizes a %s-joined expected keeping all assertions', (sep) => {
     const parsed = qualityOutputProfile.parse(qualityOutputProfile.normalize({
       finalTestCases: [makeQualityCase({
         steps: [{
@@ -505,7 +505,7 @@ describe('qualityOutputProfile', () => {
         }],
       })],
     }));
-    expect(parsed.finalTestCases[0].steps[0].expected).toBe('first assertion');
+    expect(parsed.finalTestCases[0].steps[0].expected).toBe('first assertion and second assertion and third');
   });
 
   it('falls back to the draft testLevel when the LLM writes an unrecognizable value', () => {

@@ -336,6 +336,7 @@ export function TestGenConfigPanel({
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedModel, setSelectedModel] = useState(savedConfig?.selectedModel ?? defaultConfig.selectedModel);
+  const [selectedProviderName, setSelectedProviderName] = useState(savedConfig?.selectedProviderName ?? '');
   const [modelName, setModelName] = useState(savedConfig?.modelName ?? defaultConfig.modelName);
   const [modelOpen, setModelOpen] = useState(false);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
@@ -365,13 +366,16 @@ export function TestGenConfigPanel({
   const modelOptions = useMemo(() => modelGroups.flatMap(g => g.models), [modelGroups]);
   // Selected provider derived from selected model
   const selectedProvider = useMemo(() => {
+    if (selectedProviderName && modelOptions.some(o => o.providerName === selectedProviderName && o.model === selectedModel)) {
+      return selectedProviderName;
+    }
     const opt = modelOptions.find(o => o.model === selectedModel);
     return opt?.providerName || '';
-  }, [modelOptions, selectedModel]);
+  }, [modelOptions, selectedModel, selectedProviderName]);
   const selectedProviderType = useMemo(() => {
-    const opt = modelOptions.find(o => o.model === selectedModel);
+    const opt = modelOptions.find(o => o.model === selectedModel && (!selectedProvider || o.providerName === selectedProvider));
     return opt?.providerType || '';
-  }, [modelOptions, selectedModel]);
+  }, [modelOptions, selectedModel, selectedProvider]);
   // Auto-select first model from active provider
   useEffect(() => {
     if (!selectedModel && modelOptions.length > 0) {
@@ -380,10 +384,12 @@ export function TestGenConfigPanel({
         const firstModel = modelOptions.find(o => o.providerName === active.name);
         if (firstModel) {
           setSelectedModel(firstModel.model);
+          setSelectedProviderName(firstModel.providerName);
           setModelName(`${firstModel.model} (${firstModel.providerName})`);
         }
       } else if (modelOptions[0]) {
         setSelectedModel(modelOptions[0].model);
+        setSelectedProviderName(modelOptions[0].providerName);
         setModelName(`${modelOptions[0].model} (${modelOptions[0].providerName})`);
       }
     }
@@ -395,10 +401,10 @@ export function TestGenConfigPanel({
 
   useEffect(() => {
     saveConfig({
-      mode, showApprovedOnly, selectedModel, modelName, useCache,
+      mode, showApprovedOnly, selectedModel, selectedProviderName, modelName, useCache,
       reasoningEffort, reasoningSummary, textVerbosity,
     });
-  }, [mode, showApprovedOnly, selectedModel, modelName, useCache, reasoningEffort, reasoningSummary, textVerbosity]);
+  }, [mode, showApprovedOnly, selectedModel, selectedProviderName, modelName, useCache, reasoningEffort, reasoningSummary, textVerbosity]);
 
   const filteredRequirements = useMemo(() => {
     let base = requirements;
@@ -526,6 +532,7 @@ export function TestGenConfigPanel({
     setMode(defaultConfig.mode);
     setShowApprovedOnly(defaultConfig.showApprovedOnly);
     setSelectedModel(defaultConfig.selectedModel);
+    setSelectedProviderName('');
     setModelName(defaultConfig.modelName);
     setUseCache(defaultConfig.useCache);
     setReasoningEffort('');
@@ -964,9 +971,9 @@ export function TestGenConfigPanel({
                     {group.models.map((o, i) => (
                       <button
                         key={`${o.providerName}-${o.model}-${i}`}
-                        onClick={() => { setSelectedModel(o.model); setModelName(`${o.model} (${o.providerName})`); setModelOpen(false); }}
+                        onClick={() => { setSelectedModel(o.model); setSelectedProviderName(o.providerName); setModelName(`${o.model} (${o.providerName})`); setModelOpen(false); }}
                         className={`w-full text-left px-3 py-1.5 text-xs hover:bg-blue-50 transition-colors ${
-                          selectedModel === o.model ? 'text-blue-600 font-medium bg-blue-50/50' : 'text-slate-700'
+                          selectedModel === o.model && selectedProvider === o.providerName ? 'text-blue-600 font-medium bg-blue-50/50' : 'text-slate-700'
                         }`}
                       >
                         {o.model}

@@ -12,7 +12,7 @@
  * 工具本身只返回 ack；真正拼装由 quality 的 emit-extract merge draft cases 完成。
  */
 import { z } from 'zod';
-import { nlStepIntentSchema } from 'shared/recording/nl-intent.ts';
+import { nlStepIntentSchema, validateStepContract, type NlStepIntent } from 'shared/recording/nl-intent.ts';
 import type { SkillDefinition } from '../nodes/types.ts';
 
 const changeLogEntrySchema = z.object({
@@ -36,6 +36,15 @@ const emitReviewArgsSchema = z.object({
   changeLog: z.array(changeLogEntrySchema).default([]).describe('Field-level changes; empty array when the case is untouched or just approved.'),
   steps: z.array(finalStepSchema).min(1).max(200).optional().describe('FULL replacement steps array for this case. Omit to keep the draft steps unchanged (the common case).'),
   testData: z.array(z.string()).optional().describe('FULL replacement testData. Omit to keep the draft testData unchanged.'),
+}).superRefine((val, ctx) => {
+  if (val.steps) {
+    for (const step of val.steps) {
+      const issues = validateStepContract(String(step.action ?? ''), step.intent as NlStepIntent | undefined);
+      for (const issue of issues) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['steps'], message: issue });
+      }
+    }
+  }
 });
 
 const emitCoverageRowArgsSchema = z.object({

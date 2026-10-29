@@ -5,6 +5,7 @@ const nlStepSchema = z.object({
   stepNumber: z.number().optional(),
   action: z.string().min(1),
   expected: z.string().optional(),
+  intent: z.record(z.string(), z.unknown()).optional(),
 });
 
 const testDataSchema = z.object({

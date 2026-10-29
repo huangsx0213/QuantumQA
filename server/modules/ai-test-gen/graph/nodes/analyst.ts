@@ -88,7 +88,7 @@ export function makeAnalystNode(opts: AnalystNodeOptions) {
       // real condition IDs — not fabricated compound IDs that break downstream
       // related-requirement lookup.
       const externalConditionIds = new Set<string>();
-      if (state.generationMode === 'flow') {
+      if (state.generationMode === 'flow' || state.generationMode === 'mixed') {
         for (const condition of loadComponentConditions(state.runId)) {
           externalConditionIds.add(condition.id);
         }

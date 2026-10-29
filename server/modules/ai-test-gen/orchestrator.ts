@@ -588,6 +588,7 @@ export class Orchestrator {
           }
         }
         log.info(`Total accumulated reference requirements: ${accumulatedCoverage.size}`);
+        this.persistRunStateCoverage(runId, accumulatedCoverage);
       }
 
       // 执行批次循环 (P0.2)
@@ -678,6 +679,24 @@ export class Orchestrator {
       this.sseGateway.emit(runId, 'checkpoint:resolved', { checkpointNumber: cpNum, action });
     }
 
+    const AGENT_NAMES: Record<number, string> = { 1: 'test_analyst', 2: 'test_designer', 3: 'quality_manager' };
+    const agentName = AGENT_NAMES[cpNum];
+    if (editedData && agentName) {
+      const stateKeys: Record<string, unknown> = {};
+      if (cpNum === 1) {
+        if (editedData.conditions) stateKeys.testConditions = editedData.conditions;
+        if (editedData.analysis) stateKeys.requirementAnalysis = editedData.analysis;
+      } else if (cpNum === 2) {
+        if (editedData.cases) stateKeys.draftTestCases = editedData.cases;
+      } else if (cpNum === 3) {
+        if (editedData.cases) stateKeys.finalTestCases = editedData.cases;
+        if (editedData.matrix) stateKeys.coverageMatrix = editedData.matrix;
+      }
+      if (Object.keys(stateKeys).length > 0) {
+        pipelineRepo.updateAgentLogOutput(runId, agentName, stateKeys);
+      }
+    }
+
     const config = row.config || {};
     let ctx: RunContext | null = null;
     let keepSse = false;
@@ -711,7 +730,7 @@ export class Orchestrator {
       // Update state for the newly completed resumed batch (P1.8)
       try {
         const { coverage } = this.readRunStateCoverage(runId);
-        const batchConditions: any[] = outcome.result.lastState?.testConditions ?? [];
+        const batchConditions: any[] = outcome.result.lastState?.approvedConditions ?? outcome.result.lastState?.testConditions ?? [];
         for (const tc of batchConditions) coverage.addCondition(tc);
         const batchCases: any[] = outcome.result.lastState?.finalTestCases ?? [];
         for (const tc of batchCases) coverage.addCase(tc);
@@ -1370,7 +1389,7 @@ export class Orchestrator {
       && (beforeBatch === undefined || logEntry.batch < beforeBatch);
     const analystLogs = pipelineRepo.getAgentLogs(runId, 'test_analyst');
     for (const logEntry of analystLogs.filter(isEligible)) {
-      const tcs: any[] = logEntry.output_data?.testConditions ?? [];
+      const tcs: any[] = logEntry.output_data?.approvedConditions ?? logEntry.output_data?.testConditions ?? [];
       for (const tc of tcs) {
         if (tc.id && tc.condition && tc.requirementId) coverage.addCondition(tc);
       }

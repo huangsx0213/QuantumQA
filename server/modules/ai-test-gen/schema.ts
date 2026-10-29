@@ -1,7 +1,21 @@
 import { z } from 'zod';
 
-export const startPipelineSchema = z.object({
-  requirementIds: z.array(z.string()).min(1),
+export const startPipelineSchema = z.preprocess((val: any) => {
+  if (val && typeof val === 'object') {
+    const hasReqs = Array.isArray(val.requirementIds) && val.requirementIds.length > 0;
+    const hasFlows = Array.isArray(val.flowIds) && val.flowIds.length > 0;
+    if (hasFlows && !hasReqs) {
+      return { ...val, requirementIds: [] };
+    }
+    if (!hasReqs && !hasFlows) {
+      const copy = { ...val };
+      delete copy.requirementIds;
+      return copy;
+    }
+  }
+  return val;
+}, z.object({
+  requirementIds: z.array(z.string()),
   providerConfigName: z.string().min(1),
   model: z.string().optional(),
   mode: z.enum(['auto', 'interactive']).default('auto'),
@@ -13,7 +27,7 @@ export const startPipelineSchema = z.object({
   textVerbosity: z.enum(['low', 'medium', 'high']).optional(),
   referenceRunIds: z.array(z.string()).optional(),
   htmlKnowledgeSetId: z.string().min(1).optional(),
-});
+}));
 
 export const resumePipelineSchema = z.object({
   action: z.enum(['approve', 'retry']),

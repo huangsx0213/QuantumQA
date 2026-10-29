@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { db } from '../../shared/db/client.ts';
 
 import { randomId } from '../../shared/utils/index.ts';
 import { pipelineRepo } from './repository.ts';
@@ -151,14 +152,26 @@ export class TestGenController {
     const allCases = logs
       .filter(l => l.agent_name === 'quality_manager' && l.output_data?.finalTestCases)
       .flatMap(l => l.output_data.finalTestCases);
-    if (allCases.length === 0) throw new ConflictError('No test cases found to export');
+    const validCases = allCases.filter(c => c.status !== 'rejected');
+    if (validCases.length === 0) throw new ConflictError('No test cases found to export');
 
-    // 保存全部用例，不在保存阶段去重。每个用例生成新的 DB id（不沿用 LLM 生成的
-    // transient id），避免跨运行同名 id 互相覆盖。去重应由生成阶段负责。
-    for (const tc of allCases) {
-      nlCaseRepo.save({ ...tc, id: undefined, projectId: run.project_id });
-    }
-    return { saved: allCases.length };
+    const existing = nlCaseRepo.listByProject(run.project_id);
+    const existingKeys = new Set(existing.map(c => `${c.title}:::${c.conditionId ?? ''}`));
+
+    const saveTransaction = db.transaction(() => {
+      let saved = 0;
+      for (const tc of validCases) {
+        const key = `${tc.title}:::${tc.conditionId ?? ''}`;
+        if (existingKeys.has(key)) continue;
+        nlCaseRepo.save({ ...tc, id: undefined, projectId: run.project_id, status: 'APPROVED' });
+        existingKeys.add(key);
+        saved++;
+      }
+      return saved;
+    });
+
+    const saved = saveTransaction();
+    return { saved };
   }
 
   /** 获取思考数据（持久化的） */
@@ -246,16 +259,29 @@ export class TestGenController {
 
   /** 恢复中断的运行（服务重启后调用） */
   async recoverInterruptedRuns(): Promise<void> {
-    const waitingRuns = pipelineRepo.getWaitingRuns();
     const log = Log.for('controller');
+
+    // 1. 对遗留 RUNNING 运行做 reconciliation，避免永久遗留挂起
+    const runningRuns = pipelineRepo.getRunningRuns();
+    for (const run of runningRuns) {
+      log.warn(`Reconciling orphaned RUNNING run ${run.id} left by crashed process; marking as FAILED`);
+      pipelineRepo.markRunFailed(run.id);
+    }
+
+    // 2. 检查待评审运行：交互式运行保持 WAITING_REVIEW 等待人审，自动模式才恢复执行
+    const waitingRuns = pipelineRepo.getWaitingRuns();
     if (waitingRuns.length === 0) {
       log.info('No interrupted test gen runs to recover');
       return;
     }
 
-    log.info(`Recovering ${waitingRuns.length} interrupted run(s)...`);
+    log.info(`Checking ${waitingRuns.length} waiting run(s)...`);
     for (const run of waitingRuns) {
-      log.info(`Resuming run ${run.id} (phase: ${run.phase})`);
+      if (run.mode === 'interactive') {
+        log.info(`Run ${run.id} is in interactive mode (phase: ${run.phase}); keeping WAITING_REVIEW for human review`);
+        continue;
+      }
+      log.info(`Resuming auto run ${run.id} (phase: ${run.phase})`);
       this.orchestrator.resume(run.id, 'approve').catch(err => {
         log.error(`Failed to resume run ${run.id}: ${err.message}`);
       });

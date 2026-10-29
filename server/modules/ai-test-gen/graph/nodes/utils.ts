@@ -640,6 +640,7 @@ interface EmitRepairDeps<T> {
   parseErr: unknown;
   conversationMessages: ChatMessage[];
   existingRecords: ToolCallRecord[];
+  initialUsage?: { input: number; output: number; reasoning: number; cached: number };
 }
 
 const MAX_EMIT_REPAIR_ROUNDS = 3;
@@ -654,6 +655,13 @@ async function runEmitRepair<T>(deps: EmitRepairDeps<T>): Promise<{ output: T; u
   let curConversation = [...conversationMessages];
   let curGaps = extractRepairGaps(parseErr);
   let curErrorText = outputProfile.formatValidationError(parseErr);
+
+  let totalUsage = {
+    input: deps.initialUsage?.input ?? 0,
+    output: deps.initialUsage?.output ?? 0,
+    reasoning: deps.initialUsage?.reasoning ?? 0,
+    cached: deps.initialUsage?.cached ?? 0,
+  };
 
   const emitCount = existingRecords.filter((r) => r.name.startsWith('emit_')).length;
   llmLog.warn(`emit-repair attribution: ${formatRepairPlan({ mode: 'emit', emitCount, layer: 'global', gaps: curGaps })}`);
@@ -683,6 +691,13 @@ async function runEmitRepair<T>(deps: EmitRepairDeps<T>): Promise<{ output: T; u
       extra,
     );
 
+    totalUsage = {
+      input: totalUsage.input + repair.usage.input,
+      output: totalUsage.output + repair.usage.output,
+      reasoning: totalUsage.reasoning + repair.usage.reasoning,
+      cached: totalUsage.cached + repair.usage.cached,
+    };
+
     // 追加本轮新增的会话消息（供下一轮上下文）。
     curConversation = [...curConversation, ...repair.conversationMessages.slice(curConversation.length)];
 
@@ -697,7 +712,7 @@ async function runEmitRepair<T>(deps: EmitRepairDeps<T>): Promise<{ output: T; u
       const result = outputProfile.parse(normalized);
       llmLog.success(`emit-repair converged on attempt ${attempt}`);
       observer?.onStep?.(name, 2, 'Phase 1.25: Emit-repair success');
-      return { output: result, usage: repair.usage, toolCallRecords: records };
+      return { output: result, usage: totalUsage, toolCallRecords: records };
     } catch (repairErr: any) {
       curErrorText = outputProfile.formatValidationError(repairErr);
       curGaps = extractRepairGaps(repairErr);
@@ -728,6 +743,13 @@ async function runEmitRepair<T>(deps: EmitRepairDeps<T>): Promise<{ output: T; u
       extra,
     );
 
+    totalUsage = {
+      input: totalUsage.input + completion.usage.input,
+      output: totalUsage.output + completion.usage.output,
+      reasoning: totalUsage.reasoning + completion.usage.reasoning,
+      cached: totalUsage.cached + completion.usage.cached,
+    };
+
     const completedRecords = [...records, ...completion.toolCallRecords];
     const completedMerged = outputProfile.emitExtract?.(completedRecords, completion.contentText, name) ?? null;
     if (completedMerged) {
@@ -735,7 +757,7 @@ async function runEmitRepair<T>(deps: EmitRepairDeps<T>): Promise<{ output: T; u
         const result = outputProfile.parse(outputProfile.normalize(completedMerged));
         llmLog.success('Phase 1.26 targeted completion converged');
         observer?.onStep?.(name, 2, 'Phase 1.26: Targeted completion success');
-        return { output: result, usage: completion.usage, toolCallRecords: completedRecords };
+        return { output: result, usage: totalUsage, toolCallRecords: completedRecords };
       } catch (err: any) {
         llmLog.warn(`Phase 1.26 completion still invalid: ${outputProfile.formatValidationError(err).split('\n')[0]}`);
       }
@@ -786,7 +808,7 @@ export async function callLLMWithStructuredOutput<T>(
 
   const { contentText, thinkingText, toolCallRecords, usage: capturedUsage, conversationMessages } = reactResult;
 
-  if (!contentText && !thinkingText) {
+  if (!contentText && !thinkingText && (!toolCallRecords || toolCallRecords.length === 0)) {
     throw new Error('LLM produced no content in thinking phase');
   }
 
@@ -827,6 +849,7 @@ export async function callLLMWithStructuredOutput<T>(
         conversationMessages,
         existingRecords: toolCallRecords,
         agentName,
+        initialUsage: capturedUsage,
       });
       if (repaired) {
         return repaired;

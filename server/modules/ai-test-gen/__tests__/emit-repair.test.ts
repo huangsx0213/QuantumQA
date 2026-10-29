@@ -53,7 +53,7 @@ describe('Phase 1.25 emit-repair', () => {
     } as any;
 
     const profile = createAnalystOutputProfile();
-    const { output, toolCallRecords } = await callLLMWithStructuredOutput(
+    const { output, usage, toolCallRecords } = await callLLMWithStructuredOutput(
       provider,
       [] as any,
       [emitAnalysisSkill, emitConditionSkill] as any,
@@ -69,5 +69,8 @@ describe('Phase 1.25 emit-repair', () => {
     expect(parsed.testConditions[0].flowStepRefs).toHaveLength(1);
     // 修补轮确实被触发（总 streamChat 调用 > 主循环需要的 2 次）
     expect(provider.streamChat).toHaveBeenCalledTimes(4);
+    // Usage 跨修补轮完整累积（4 次调用每次 1 input + 1 output）
+    expect(usage.input).toBe(4);
+    expect(usage.output).toBe(4);
   });
 });
